@@ -1,0 +1,20 @@
+# Core dependencies
+torch>=1.10
+numpy>=1.21
+pyyaml>=5.4
+
+# For ViT and tensor manipulation
+# (ViT encoder uses einops)
+einops>=0.4.1
+
+torchvision>=0.11  # For transforms and ToPILImage in utils
+
+# For plotting and analysis (optional, but used in utils)
+matplotlib>=3.4
+
+# For RL agent and PPO data collection (optional, not needed for color predictor only)
+stable-baselines3>=1.4.0  # Only if using PPO data collection
+gymnasium>=0.26  # Only if using RL environments
+
+# For type hints and development (optional)
+typing-extensions>=4.0 
