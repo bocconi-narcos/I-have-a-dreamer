@@ -5,6 +5,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
 import numpy as np
 import yaml
+import pickle
 from src.models.state_encoder import StateEncoder
 from src.models.color_predictor import ColorPredictor
 
@@ -34,9 +35,9 @@ class ReplayBufferDataset(Dataset):
         self.num_arc_colors = num_arc_colors
         self.state_shape = state_shape
         if os.path.exists(buffer_path):
-            # TODO: Implement real buffer loading
-            # Example: with open(buffer_path, 'rb') as f: self.buffer = pickle.load(f)
-            raise NotImplementedError("Buffer loading not implemented yet.")
+            with open(buffer_path, 'rb') as f:
+                self.buffer = pickle.load(f)
+            self.num_samples = len(self.buffer)
         else:
             # Generate dummy data with the correct structure
             self.buffer = []
@@ -157,7 +158,7 @@ def train_color_predictor():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('mps' if torch.cuda.is_available() else 'cpu')
     state_encoder = StateEncoder(encoder_type, latent_dim=latent_dim, **encoder_params).to(device)
     color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
 

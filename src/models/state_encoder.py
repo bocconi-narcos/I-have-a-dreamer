@@ -11,9 +11,20 @@ class StateEncoder(nn.Module):
         elif encoder_type == 'cnn':
             self.encoder = CNNEncoder(**kwargs)
         elif encoder_type == 'vit':
-            self.encoder = ViT(**kwargs)
+            # Extract latent_dim and map it to dim for ViT
+            latent_dim = kwargs.pop('latent_dim', 256)
+            # Map input_channels to channels for ViT
+            if 'input_channels' in kwargs:
+                kwargs['channels'] = kwargs.pop('input_channels')
+            # Set num_classes to 0 for feature extraction (no classification head)
+            vit_kwargs = {
+                'dim': latent_dim,
+                'num_classes': 0,  # No classification head, return latent representation
+                **kwargs
+            }
+            self.encoder = ViT(**vit_kwargs)
         else:
             raise ValueError(f"Unknown encoder type: {encoder_type}")
 
     def forward(self, x):
-        return self.encoder(x)  
+        return self.encoder(x)
