@@ -8,83 +8,12 @@ import pickle
 from src.models.state_encoder import StateEncoder
 from src.models.color_predictor import ColorPredictor
 from src.data import ReplayBufferDataset
-
+from torch.utils.data import Dataset
 # --- Config Loader ---
 def load_config(config_path="unified_config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
-# --- Replay Buffer Dataset ---
-class ReplayBufferDataset(Dataset):
-    """
-    Dataset for color predictor training. Expects a buffer (list of dicts) with the following keys:
-        - state: (H, W) ndarray or tensor
-        - target_state: (H, W)
-        - color_in_state: int
-        - action: dict with keys 'colour', 'selection', 'transform'
-        - colour: int (the true color after selection)
-        - selection_mask: (H, W)
-        - reward: float
-        - next_state: (H, W)
-        - done: bool
-        - info: dict (optional)
-    If buffer_path does not exist, generates dummy data with the correct structure.
-    """
-    def __init__(self, buffer_path, num_color_selection_fns, num_arc_colors, state_shape, num_samples=1000):
-        self.num_color_selection_fns = num_color_selection_fns
-        self.num_arc_colors = num_arc_colors
-        self.state_shape = state_shape
-        if os.path.exists(buffer_path):
-            with open(buffer_path, 'rb') as f:
-                self.buffer = pickle.load(f)
-            self.num_samples = len(self.buffer)
-        else:
-            # Generate dummy data with the correct structure
-            self.buffer = []
-            for _ in range(num_samples):
-                state = np.random.randint(0, num_arc_colors, size=state_shape).astype(np.int64)
-                target_state = np.random.randint(0, num_arc_colors, size=state_shape).astype(np.int64)
-                color_in_state = np.random.randint(1, num_arc_colors+1)
-                action = {
-                    'colour': np.random.randint(0, num_color_selection_fns),
-                    'selection': np.random.randint(0, 5),
-                    'transform': np.random.randint(0, 5)
-                }
-                colour = np.random.randint(0, num_arc_colors)
-                selection_mask = np.random.randint(0, 2, size=state_shape).astype(np.int64)
-                reward = np.random.uniform(-1, 1)
-                next_state = np.random.randint(0, num_arc_colors, size=state_shape).astype(np.int64)
-                done = np.random.choice([True, False])
-                info = {}
-                self.buffer.append({
-                    'state': state,
-                    'target_state': target_state,
-                    'color_in_state': color_in_state,
-                    'action': action,
-                    'colour': colour,
-                    'selection_mask': selection_mask,
-                    'reward': reward,
-                    'next_state': next_state,
-                    'done': done,
-                    'info': info
-                })
-            self.num_samples = num_samples
-
-    def __len__(self):
-        return len(self.buffer)
-
-    def __getitem__(self, idx):
-        sample = self.buffer[idx]
-        # Convert to torch tensors as needed
-        state = torch.tensor(sample['state'], dtype=torch.long)
-        action_colour = torch.tensor(sample['action']['colour'], dtype=torch.long)
-        colour = torch.tensor(sample['colour'], dtype=torch.long)
-        # Optionally, return more fields if needed for future tasks
-        return {
-            'state': state,  # (H, W) or (C, H, W)
-            'action_colour': action_colour,  # int
-            'colour': colour  # int
-        }
 
 # --- One-hot encoding utility ---
 def one_hot(indices, num_classes):
