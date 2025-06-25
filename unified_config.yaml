@@ -1,11 +1,11 @@
-# Color Predictor Training Configuration
+# Unified Training Configuration for Sequential Decision-Making Modules
 
 # Data
-buffer_path: "/Users/filippogombac/Documents/GitHub/I-have-a-dreamer/data/replay_buffer_factorized.pkl"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "buffer.pkl"  # Path to replay buffer file (use dummy data if not found)
 
-# State Encoder
-encoder_type: "vit"  # Options: "mlp", "cnn", "vit"
-latent_dim: 256
+# State Encoder (Shared across all modules)
+encoder_type: "mlp"  # Options: "mlp", "cnn", "vit"
+latent_dim: 128
 encoder_params:
   mlp:
     num_hidden_layers: 2
@@ -26,31 +26,31 @@ encoder_params:
     input_channels: 1
     image_size: [10, 10]
   vit:
-    depth: 6
-    heads: 4
-    mlp_dim: 512
+    depth: 4
+    heads: 2
+    mlp_dim: 128
     pool: "cls"
     dropout: 0.1
     emb_dropout: 0.1
-    patch_size: 1
+    patch_size: 2
     input_channels: 1
     image_size: [10, 10]
 
 # Color Selection Functions
 num_color_selection_fns: 19  # Set this to the number of color selection functions in DSL
-
-# Color Predictor
-color_predictor_hidden_dim: 128
 num_arc_colors: 9
 
-# Training
-batch_size: 32
-num_epochs: 10
-learning_rate: 0.001
-num_workers: 1
-log_interval: 10
+# Selection Functions
+num_selection_fns: 8  # Set this to the number of selection functions in DSL
 
-# Selection Mask Prediction
+# Transform Functions
+num_transform_actions: 8  # Set this to the number of transform actions in DSL
+
+# Color Predictor Module
+color_predictor:
+  hidden_dim: 128
+
+# Selection Mask Prediction Module
 selection_mask:
   mask_encoder_type: "mlp"  # Options: "mlp", "cnn", "vit"
   latent_mask_dim: 64
@@ -83,7 +83,6 @@ selection_mask:
       patch_size: 2
       input_channels: 1
       image_size: [10, 10]
-  num_selection_fns: 8  # Set this to the number of selection functions in DSL
   selection_mask_predictor_hidden_dim: 128
   use_transformer: false
   transformer_depth: 2
@@ -95,4 +94,25 @@ selection_mask:
   use_vicreg: false
   vicreg_sim_coeff: 25.0
   vicreg_std_coeff: 25.0
-  vicreg_cov_coeff: 1.0 
+  vicreg_cov_coeff: 1.0
+
+# Next State Predictor Module
+next_state:
+  latent_mask_dim: 0  # Set to 0 if not using mask, else specify mask latent dim
+  transformer_depth: 2
+  transformer_heads: 2
+  transformer_dim_head: 64
+  transformer_mlp_dim: 128
+  transformer_dropout: 0.1
+  loss_type: "mse"  # Options: "mse", "vicreg"
+  use_vicreg: false
+  vicreg_sim_coeff: 25.0
+  vicreg_std_coeff: 25.0
+  vicreg_cov_coeff: 1.0
+
+# Training (Shared across all modules)
+batch_size: 32
+num_epochs: 10
+learning_rate: 0.001
+num_workers: 1
+log_interval: 10 

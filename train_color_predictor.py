@@ -2,18 +2,20 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, random_split
-import numpy as np
+from torch.utils.data import DataLoader, random_split
 import yaml
 import pickle
 from src.models.state_encoder import StateEncoder
 from src.models.color_predictor import ColorPredictor
+from src.data import ReplayBufferDataset
 
 # --- Config Loader ---
-def load_config(config_path="color_predictor_config.yaml"):
+def load_config(config_path="unified_config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
+<<<<<<< HEAD
+=======
 # --- Replay Buffer Dataset ---
 class ReplayBufferDataset(Dataset):
     """
@@ -86,6 +88,7 @@ class ReplayBufferDataset(Dataset):
             'colour': colour  # int
         }
 
+>>>>>>> origin/main
 # --- One-hot encoding utility ---
 def one_hot(indices, num_classes):
     return torch.nn.functional.one_hot(indices, num_classes=num_classes).float()
@@ -124,9 +127,9 @@ def train_color_predictor():
     The buffer is expected to be a list of dicts with the required keys. The training loop:
         1. Extracts action['colour'] and one-hot encodes it.
         2. Passes state through the configurable state encoder.
-        3. Concatenates state embedding and action encoding, passes through MLP.
+        3. Concatenates state embedding and color action encoding, passes through MLP.
         4. Computes cross-entropy loss with the true colour.
-    All model choices and hyperparameters are loaded from color_predictor_config.yaml.
+    All model choices and hyperparameters are loaded from unified_config.yaml.
     """
     config = load_config()
     buffer_path = config['buffer_path']
@@ -134,8 +137,10 @@ def train_color_predictor():
     latent_dim = config['latent_dim']
     encoder_params = config['encoder_params'][encoder_type]
     num_color_selection_fns = config['num_color_selection_fns']
-    color_predictor_hidden_dim = config['color_predictor_hidden_dim']
+    num_selection_fns = config['num_selection_fns']
+    num_transform_actions = config['num_transform_actions']
     num_arc_colors = config['num_arc_colors']
+    color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
     batch_size = config['batch_size']
     num_epochs = config['num_epochs']
     learning_rate = config['learning_rate']
@@ -150,7 +155,15 @@ def train_color_predictor():
     else:
         state_shape = (input_channels, image_size[0], image_size[1])
 
-    dataset = ReplayBufferDataset(buffer_path, num_color_selection_fns, num_arc_colors, state_shape)
+    dataset = ReplayBufferDataset(
+        buffer_path=buffer_path,
+        num_color_selection_fns=num_color_selection_fns,
+        num_selection_fns=num_selection_fns,
+        num_transform_actions=num_transform_actions,
+        num_arc_colors=num_arc_colors,
+        state_shape=state_shape,
+        mode='color_only'
+    )
     # Split into train/val (80/20)
     val_size = int(0.2 * len(dataset))
     train_size = len(dataset) - val_size
