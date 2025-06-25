@@ -1,6 +1,3 @@
-# data/__init__.py
-from .replay_buffer import ReplayBufferDataset
+from .replay_buffer_dataset import ReplayBufferDataset
 
-__all__ = [
-    "ReplayBufferDataset",
-] 
+__all__ = ["ReplayBufferDataset"] 

@@ -41,7 +41,7 @@ num_color_selection_fns: 19  # Set this to the number of color selection functio
 
 # Color Predictor
 color_predictor_hidden_dim: 128
-num_arc_colors: 9
+num_arc_colors: 10
 
 # Training
 batch_size: 32

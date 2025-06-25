@@ -4,7 +4,7 @@ import torch.nn as nn
 from src.utils.weight_init import initialize_weights
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from models.base.transformer_blocks import PreNorm, FeedForward, Attention, Transformer
+from .transformer_blocks import PreNorm, FeedForward, Attention, Transformer
 
 # helpers
 

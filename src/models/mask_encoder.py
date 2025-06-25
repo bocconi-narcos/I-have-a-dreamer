@@ -1,7 +1,7 @@
 import torch.nn as nn
-from .mlp import MLPEncoder
-from .cnn import CNNEncoder
-from .vit import ViT
+from src.models.base.mlp import MLPEncoder
+from src.models.base.cnn import CNNEncoder
+from src.models.base.vit import ViT
 
 class MaskEncoder(nn.Module):
     """

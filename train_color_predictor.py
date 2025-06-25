@@ -98,7 +98,18 @@ def train_color_predictor():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     device = torch.device('mps' if torch.cuda.is_available() else 'cpu')
-    state_encoder = StateEncoder(encoder_type, latent_dim=latent_dim, **encoder_params).to(device)
+    
+    # Extract parameters for StateEncoder
+    patch_size = encoder_params.get('patch_size', 2)  # Default for ViT
+    
+    state_encoder = StateEncoder(
+        encoder_type=encoder_type,
+        image_size=image_size,
+        patch_size=patch_size,
+        input_channels=input_channels,
+        latent_dim=latent_dim,
+        encoder_params=encoder_params
+    ).to(device)
     color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
 
     criterion = nn.CrossEntropyLoss()
