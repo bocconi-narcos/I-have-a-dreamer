@@ -4,6 +4,8 @@ Welcome to the documentation for the **I-have-a-dreamer** project.
 
 This documentation provides an overview of the project, guides for usage, configuration, and details on the model and data pipeline.
 
+**Now supports both color prediction and next state (transformation) prediction via a transformer-based module.**
+
 ## Contents
 - [Project Overview](./overview.md)
 - [Buffer/Data Structure](./buffer.md)

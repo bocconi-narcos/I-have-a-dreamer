@@ -1,0 +1,62 @@
+# Next State Predictor Training Configuration
+
+# Data
+buffer_path: "buffer.pkl"  # Path to replay buffer file (use dummy data if not found)
+
+# State Encoder
+encoder_type: "mlp"  # Options: "mlp", "cnn", "vit"
+latent_dim: 128
+encoder_params:
+  mlp:
+    num_hidden_layers: 2
+    hidden_dim: 256
+    activation_fn_str: "relu"
+    dropout_rate: 0.1
+    input_channels: 1
+    image_size: [10, 10]
+  cnn:
+    num_conv_layers: 3
+    base_filters: 32
+    kernel_size: 3
+    stride: 2
+    padding: 1
+    activation_fn_str: "relu"
+    fc_hidden_dim: null
+    dropout_rate: 0.2
+    input_channels: 1
+    image_size: [10, 10]
+  vit:
+    depth: 4
+    heads: 2
+    mlp_dim: 128
+    pool: "cls"
+    dropout: 0.1
+    emb_dropout: 0.1
+    patch_size: 2
+    input_channels: 1
+    image_size: [10, 10]
+
+# Transform Action
+num_transform_actions: 8  # Set this to the number of transform actions in DSL
+latent_mask_dim: 0       # Set to 0 if not using mask, else specify mask latent dim
+
+# Next State Predictor (Transformer)
+transformer_depth: 2
+transformer_heads: 2
+transformer_dim_head: 64
+transformer_mlp_dim: 128
+transformer_dropout: 0.1
+
+# Loss
+loss_type: "mse"  # Options: "mse", "vicreg"
+use_vicreg: false # Set true to add VICReg loss on state encoder
+vicreg_sim_coeff: 25.0
+vicreg_std_coeff: 25.0
+vicreg_cov_coeff: 1.0
+
+# Training
+batch_size: 32
+num_epochs: 10
+learning_rate: 0.001
+num_workers: 1
+log_interval: 10

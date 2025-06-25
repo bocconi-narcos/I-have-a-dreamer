@@ -2,88 +2,16 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, random_split
-import numpy as np
+from torch.utils.data import DataLoader, random_split
 import yaml
 from src.models.state_encoder import StateEncoder
 from src.models.color_predictor import ColorPredictor
+from src.data import ReplayBufferDataset
 
 # --- Config Loader ---
-def load_config(config_path="color_predictor_config.yaml"):
+def load_config(config_path="unified_config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
-
-# --- Replay Buffer Dataset ---
-class ReplayBufferDataset(Dataset):
-    """
-    Dataset for color predictor training. Expects a buffer (list of dicts) with the following keys:
-        - state: (H, W) ndarray or tensor
-        - target_state: (H, W)
-        - color_in_state: int
-        - action: dict with keys 'colour', 'selection', 'transform'
-        - colour: int (the true color after selection)
-        - selection_mask: (H, W)
-        - reward: float
-        - next_state: (H, W)
-        - done: bool
-        - info: dict (optional)
-    If buffer_path does not exist, generates dummy data with the correct structure.
-    """
-    def __init__(self, buffer_path, num_color_selection_fns, num_arc_colors, state_shape, num_samples=1000):
-        self.num_color_selection_fns = num_color_selection_fns
-        self.num_arc_colors = num_arc_colors
-        self.state_shape = state_shape
-        if os.path.exists(buffer_path):
-            # TODO: Implement real buffer loading
-            # Example: with open(buffer_path, 'rb') as f: self.buffer = pickle.load(f)
-            raise NotImplementedError("Buffer loading not implemented yet.")
-        else:
-            # Generate dummy data with the correct structure
-            self.buffer = []
-            for _ in range(num_samples):
-                state = np.random.randint(0, num_arc_colors, size=state_shape).astype(np.int64)
-                target_state = np.random.randint(0, num_arc_colors, size=state_shape).astype(np.int64)
-                color_in_state = np.random.randint(1, num_arc_colors+1)
-                action = {
-                    'colour': np.random.randint(0, num_color_selection_fns),
-                    'selection': np.random.randint(0, 5),
-                    'transform': np.random.randint(0, 5)
-                }
-                colour = np.random.randint(0, num_arc_colors)
-                selection_mask = np.random.randint(0, 2, size=state_shape).astype(np.int64)
-                reward = np.random.uniform(-1, 1)
-                next_state = np.random.randint(0, num_arc_colors, size=state_shape).astype(np.int64)
-                done = np.random.choice([True, False])
-                info = {}
-                self.buffer.append({
-                    'state': state,
-                    'target_state': target_state,
-                    'color_in_state': color_in_state,
-                    'action': action,
-                    'colour': colour,
-                    'selection_mask': selection_mask,
-                    'reward': reward,
-                    'next_state': next_state,
-                    'done': done,
-                    'info': info
-                })
-            self.num_samples = num_samples
-
-    def __len__(self):
-        return len(self.buffer)
-
-    def __getitem__(self, idx):
-        sample = self.buffer[idx]
-        # Convert to torch tensors as needed
-        state = torch.tensor(sample['state'], dtype=torch.long)
-        action_colour = torch.tensor(sample['action']['colour'], dtype=torch.long)
-        colour = torch.tensor(sample['colour'], dtype=torch.long)
-        # Optionally, return more fields if needed for future tasks
-        return {
-            'state': state,  # (H, W) or (C, H, W)
-            'action_colour': action_colour,  # int
-            'colour': colour  # int
-        }
 
 # --- One-hot encoding utility ---
 def one_hot(indices, num_classes):
@@ -123,9 +51,9 @@ def train_color_predictor():
     The buffer is expected to be a list of dicts with the required keys. The training loop:
         1. Extracts action['colour'] and one-hot encodes it.
         2. Passes state through the configurable state encoder.
-        3. Concatenates state embedding and action encoding, passes through MLP.
+        3. Concatenates state embedding and color action encoding, passes through MLP.
         4. Computes cross-entropy loss with the true colour.
-    All model choices and hyperparameters are loaded from color_predictor_config.yaml.
+    All model choices and hyperparameters are loaded from unified_config.yaml.
     """
     config = load_config()
     buffer_path = config['buffer_path']
@@ -133,8 +61,10 @@ def train_color_predictor():
     latent_dim = config['latent_dim']
     encoder_params = config['encoder_params'][encoder_type]
     num_color_selection_fns = config['num_color_selection_fns']
-    color_predictor_hidden_dim = config['color_predictor_hidden_dim']
+    num_selection_fns = config['num_selection_fns']
+    num_transform_actions = config['num_transform_actions']
     num_arc_colors = config['num_arc_colors']
+    color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
     batch_size = config['batch_size']
     num_epochs = config['num_epochs']
     learning_rate = config['learning_rate']
@@ -149,7 +79,15 @@ def train_color_predictor():
     else:
         state_shape = (input_channels, image_size[0], image_size[1])
 
-    dataset = ReplayBufferDataset(buffer_path, num_color_selection_fns, num_arc_colors, state_shape)
+    dataset = ReplayBufferDataset(
+        buffer_path=buffer_path,
+        num_color_selection_fns=num_color_selection_fns,
+        num_selection_fns=num_selection_fns,
+        num_transform_actions=num_transform_actions,
+        num_arc_colors=num_arc_colors,
+        state_shape=state_shape,
+        mode='color_only'
+    )
     # Split into train/val (80/20)
     val_size = int(0.2 * len(dataset))
     train_size = len(dataset) - val_size

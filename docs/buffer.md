@@ -7,10 +7,10 @@ The training data is a **buffer**: a list of dictionaries, each representing a t
 - `color_in_state`: int — Number of colors in the original grid.
 - `action`: dict — Contains:
   - `'colour'`: int — Color selection index.
-  - `'selection'`: int — Selection index.
+  - `'selection'`: int — Selection index (used for selection mask prediction).
   - `'transform'`: int — Transform index.
 - `colour`: int — The color resulting from the color selection.
-- `selection_mask`: (H, W) — The selection mask resulting from the selection.
+- `selection_mask`: (H, W) — The selection mask resulting from the selection (used as ground truth for selection mask prediction).
 - `reward`: float — Reward for the transition.
 - `next_state`: (H, W) — The next grid state.
 - `done`: bool — Whether the episode is done.
