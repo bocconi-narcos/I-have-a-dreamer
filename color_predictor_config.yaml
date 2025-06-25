@@ -1,11 +1,11 @@
 # Color Predictor Training Configuration
 
 # Data
-buffer_path: "buffer.pkl"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "/Users/filippogombac/Documents/GitHub/I-have-a-dreamer/data/replay_buffer_factorized.pkl"  # Path to replay buffer file (use dummy data if not found)
 
 # State Encoder
-encoder_type: "mlp"  # Options: "mlp", "cnn", "vit"
-latent_dim: 128
+encoder_type: "vit"  # Options: "mlp", "cnn", "vit"
+latent_dim: 256
 encoder_params:
   mlp:
     num_hidden_layers: 2
@@ -26,13 +26,13 @@ encoder_params:
     input_channels: 1
     image_size: [10, 10]
   vit:
-    depth: 4
-    heads: 2
-    mlp_dim: 128
+    depth: 6
+    heads: 4
+    mlp_dim: 512
     pool: "cls"
     dropout: 0.1
     emb_dropout: 0.1
-    patch_size: 2
+    patch_size: 1
     input_channels: 1
     image_size: [10, 10]
 
