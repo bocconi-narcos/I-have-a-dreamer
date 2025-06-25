@@ -14,8 +14,6 @@ def load_config(config_path="unified_config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
-<<<<<<< HEAD
-=======
 # --- Replay Buffer Dataset ---
 class ReplayBufferDataset(Dataset):
     """
@@ -88,7 +86,6 @@ class ReplayBufferDataset(Dataset):
             'colour': colour  # int
         }
 
->>>>>>> origin/main
 # --- One-hot encoding utility ---
 def one_hot(indices, num_classes):
     return torch.nn.functional.one_hot(indices, num_classes=num_classes).float()
