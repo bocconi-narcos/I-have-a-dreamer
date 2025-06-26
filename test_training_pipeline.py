@@ -5,20 +5,16 @@ import numpy as np
 import yaml
 from torch.utils.data import DataLoader
 import os
-import sys
 
-# Add src to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-from models.state_encoder import StateEncoder
-from models.color_predictor import ColorPredictor
-from models.mask_encoder import MaskEncoder
-from models.selection_mask_predictor import SelectionMaskPredictor
-from models.next_state_predictor import NextStatePredictor
-from losses.vicreg import VICRegLoss
-from data import ReplayBufferDataset
-from models.reward_predictor import RewardPredictor
-from models.continuation_predictor import ContinuationPredictor
+from src.models.state_encoder import StateEncoder
+from src.models.color_predictor import ColorPredictor
+from src.models.mask_encoder import MaskEncoder
+from src.models.selection_mask_predictor import SelectionMaskPredictor
+from src.models.next_state_predictor import NextStatePredictor
+from src.losses.vicreg import VICRegLoss
+from src.data import ReplayBufferDataset
+from src.models.reward_predictor import RewardPredictor
+from src.models.continuation_predictor import ContinuationPredictor
 
 def load_config(config_path="unified_config.yaml"):
     """Load configuration from YAML file."""

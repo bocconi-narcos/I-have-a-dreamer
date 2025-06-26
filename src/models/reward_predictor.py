@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from src.utils.weight_init import initialize_weights
-from models.base.transformer_blocks import Transformer
+from src.models.base.transformer_blocks import Transformer
 
 class RewardPredictor(nn.Module):
     """
@@ -10,7 +10,7 @@ class RewardPredictor(nn.Module):
     Args:
         input_dim (int): Dimension of a single latent vector (latent_dim)
         hidden_dim (int): Hidden dimension for MLP/Transformer
-        use_transformer (bool): If True, use a transformer block over the sequence [state, next_state]; else, use MLP on concatenated input
+        use_transformer (bool): If True,       h use a transformer block over the sequence [state, next_state]; else, use MLP on concatenated input
         transformer_depth (int): Number of transformer layers (if transformer)
         transformer_heads (int): Number of attention heads (if transformer)
         transformer_dim_head (int): Dimension per attention head (if transformer)
