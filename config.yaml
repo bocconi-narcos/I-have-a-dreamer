@@ -90,9 +90,49 @@ next_state:
   vicreg_std_coeff: 25.0
   vicreg_cov_coeff: 1.0
 
+# Reward Predictor Module
+reward_predictor:
+  hidden_dim: 128
+  use_transformer: false
+  transformer_depth: 2
+  transformer_heads: 2
+  transformer_dim_head: 64
+  transformer_mlp_dim: 128
+  transformer_dropout: 0.1
+  mlp_hidden_dims: [128, 64]
+  activation_fn_str: "relu"
+  dropout_rate: 0.1
+
+# Continuation Predictor Module
+continuation_predictor:
+  hidden_dim: 128
+  use_transformer: false
+  transformer_depth: 2
+  transformer_heads: 2
+  transformer_dim_head: 64
+  transformer_mlp_dim: 128
+  transformer_dropout: 0.1
+  mlp_hidden_dims: [128, 64]
+  activation_fn_str: "relu"
+  dropout_rate: 0.1
+
 # Training (Shared across all modules)
 batch_size: 32
 num_epochs: 10
 learning_rate: 0.001
 num_workers: 1
-log_interval: 10 
+log_interval: 10
+
+# Early Stopping and Model Saving
+color_predictor_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_color_predictor.pth"
+selection_predictor_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_selection_predictor.pth"
+next_state_predictor_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_next_state_predictor.pth"
+full_model_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_full_model.pth" 

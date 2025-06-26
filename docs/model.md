@@ -26,6 +26,24 @@ The model consists of four main components:
 - Outputs a predicted latent next state.
 - Loss is MSE or optionally VICReg (configurable).
 
+## Reward Predictor
+
+The reward predictor now takes **both** the encoded state and the predicted next latent state as input, allowing the transformer to attend to both.
+
+- **Transformer mode:** Input is a tensor of shape `(B, 2, latent_dim)`, where the second dimension is `[encoded_state, predicted_next_state]`.
+- **MLP mode:** Input is a tensor of shape `(B, 2*latent_dim)`, which is the concatenation of `encoded_state` and `predicted_next_state`.
+
+**Output:** (B,)
+
+## Continuation Predictor
+
+The continuation predictor now takes **both** the encoded state and the predicted next latent state as input, allowing the transformer to attend to both.
+
+- **Transformer mode:** Input is a tensor of shape `(B, 2, latent_dim)`, where the second dimension is `[encoded_state, predicted_next_state]`.
+- **MLP mode:** Input is a tensor of shape `(B, 2*latent_dim)`, which is the concatenation of `encoded_state` and `predicted_next_state`.
+
+**Output:** (B,)
+
 ## Data Flow
 1. State → State Encoder → Latent Vector
 2. Action['colour'] → One-hot Encoding

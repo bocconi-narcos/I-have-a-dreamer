@@ -118,6 +118,8 @@ class ReplayBufferDataset(Dataset):
             'action_transform': action_transform,
             'colour': colour,
             'selection_mask': selection_mask,
+            'reward': torch.tensor(transition['reward'], dtype=torch.float32),
+            'done': torch.tensor(float(transition['done']), dtype=torch.float32),
         }
         
         # Add next_state for modes that need it

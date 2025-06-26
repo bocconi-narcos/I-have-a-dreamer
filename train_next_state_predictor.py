@@ -221,7 +221,7 @@ def train_next_state_predictor():
     vicreg_loss_fn_next_state = VICRegLoss(sim_coeff=vicreg_sim_coeff_next_state, std_coeff=vicreg_std_coeff_next_state, cov_coeff=vicreg_cov_coeff_next_state)
     
     # Optimize all modules together
-    optimizer = optim.Adam(
+    optimizer = optim.AdamW(
         list(state_encoder.parameters()) + 
         list(color_predictor.parameters()) + 
         list(mask_encoder.parameters()) + 
@@ -231,6 +231,9 @@ def train_next_state_predictor():
     )
 
     best_val_loss = float('inf')
+    epochs_no_improve = 0
+    patience = 10
+    save_path = 'best_model_next_state_predictor.pth'
     for epoch in range(num_epochs):
         state_encoder.train()
         color_predictor.train()
@@ -308,23 +311,25 @@ def train_next_state_predictor():
             use_vicreg_selection, use_vicreg_next_state, vicreg_loss_fn_selection, vicreg_loss_fn_next_state
         )
         
-        total_val_loss = val_color_loss + val_selection_loss + val_next_state_loss
-        print(f"Epoch {epoch+1}/{num_epochs}")
-        print(f"Train - Color: {avg_color_loss:.4f} | Selection: {avg_selection_loss:.4f} | Next State: {avg_next_state_loss:.4f}")
-        print(f"Val - Color: {val_color_loss:.4f} | Selection: {val_selection_loss:.4f} | Next State: {val_next_state_loss:.4f} | Color Acc: {val_color_acc:.4f}")
-        
-        if total_val_loss < best_val_loss:
-            best_val_loss = total_val_loss
+        val_loss_sum = val_color_loss + val_selection_loss + val_next_state_loss
+        print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {total_color_loss/train_size:.4f} | Train Selection Loss: {total_selection_loss/train_size:.4f} | Train Next State Loss: {total_next_state_loss/train_size:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Color Acc: {val_color_acc:.4f}")
+        if val_loss_sum < best_val_loss:
+            best_val_loss = val_loss_sum
+            epochs_no_improve = 0
             torch.save({
                 'state_encoder': state_encoder.state_dict(),
                 'color_predictor': color_predictor.state_dict(),
                 'mask_encoder': mask_encoder.state_dict(),
                 'selection_mask_predictor': selection_mask_predictor.state_dict(),
-                'next_state_predictor': next_state_predictor.state_dict(),
-                'epoch': epoch,
-                'best_val_loss': best_val_loss
-            }, 'best_model_end_to_end.pth')
-            print(f"Saved best model with validation loss: {best_val_loss:.4f}")
+                'next_state_predictor': next_state_predictor.state_dict()
+            }, save_path)
+            print(f"New best model saved to {save_path}")
+        else:
+            epochs_no_improve += 1
+            print(f"No improvement for {epochs_no_improve} epoch(s)")
+        if epochs_no_improve >= patience:
+            print(f"Early stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
+            break
 
 if __name__ == "__main__":
     train_next_state_predictor() 

@@ -115,8 +115,12 @@ def train_color_predictor():
                                      num_arc_colors=11, color_predictor_hidden_dim=color_predictor_hidden_dim).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=learning_rate)
+    optimizer = optim.AdamW(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=learning_rate)
 
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    patience = 10
+    save_path = 'best_model_color_predictor.pth'
     for epoch in range(num_epochs):
         state_encoder.train()
         color_predictor.train()
@@ -152,6 +156,20 @@ def train_color_predictor():
         avg_loss = total_loss / len(train_loader.dataset)
         val_loss, val_acc = evaluate(color_predictor, state_encoder, val_loader, device, criterion, num_color_selection_fns)
         print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+            torch.save({
+                'state_encoder': state_encoder.state_dict(),
+                'color_predictor': color_predictor.state_dict()
+            }, save_path)
+            print(f"New best model saved to {save_path}")
+        else:
+            epochs_no_improve += 1
+            print(f"No improvement for {epochs_no_improve} epoch(s)")
+        if epochs_no_improve >= patience:
+            print(f"Early stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
+            break
 
 if __name__ == "__main__":
     train_color_predictor() 

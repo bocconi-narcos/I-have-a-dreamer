@@ -17,6 +17,8 @@ from models.selection_mask_predictor import SelectionMaskPredictor
 from models.next_state_predictor import NextStatePredictor
 from losses.vicreg import VICRegLoss
 from data import ReplayBufferDataset
+from models.reward_predictor import RewardPredictor
+from models.continuation_predictor import ContinuationPredictor
 
 def load_config(config_path="unified_config.yaml"):
     """Load configuration from YAML file."""
@@ -162,6 +164,29 @@ def test_dimensions_and_shapes():
     pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
     print(f"Next state predictor output: {pred_next_latent.shape}")
     assert pred_next_latent.shape == (batch_size, latent_dim), f"Expected {(batch_size, latent_dim)}, got {pred_next_latent.shape}"
+    
+    # --- Reward Predictor and Continuation Predictor input shape tests ---
+    # Transformer mode
+    reward_predictor = RewardPredictor(input_dim=latent_dim, use_transformer=True)
+    continuation_predictor = ContinuationPredictor(input_dim=latent_dim, use_transformer=True)
+    stacked = torch.stack([latent, pred_next_latent], dim=1)  # (B, 2, latent_dim)
+    reward_out = reward_predictor(stacked)
+    continuation_out = continuation_predictor(stacked)
+    print(f"Reward predictor (transformer) output: {reward_out.shape}")
+    print(f"Continuation predictor (transformer) output: {continuation_out.shape}")
+    assert reward_out.shape == (batch_size,), f"Expected {(batch_size,)}, got {reward_out.shape}"
+    assert continuation_out.shape == (batch_size,), f"Expected {(batch_size,)}, got {continuation_out.shape}"
+
+    # MLP mode
+    reward_predictor_mlp = RewardPredictor(input_dim=latent_dim, use_transformer=False)
+    continuation_predictor_mlp = ContinuationPredictor(input_dim=latent_dim, use_transformer=False)
+    concatenated = torch.cat([latent, pred_next_latent], dim=1)  # (B, 2*latent_dim)
+    reward_out_mlp = reward_predictor_mlp(concatenated)
+    continuation_out_mlp = continuation_predictor_mlp(concatenated)
+    print(f"Reward predictor (MLP) output: {reward_out_mlp.shape}")
+    print(f"Continuation predictor (MLP) output: {continuation_out_mlp.shape}")
+    assert reward_out_mlp.shape == (batch_size,), f"Expected {(batch_size,)}, got {reward_out_mlp.shape}"
+    assert continuation_out_mlp.shape == (batch_size,), f"Expected {(batch_size,)}, got {continuation_out_mlp.shape}"
     
     print("✅ All dimension tests passed!")
 
@@ -324,7 +349,7 @@ def test_training_loops():
         color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
         
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=0.001)
+        optimizer = optim.AdamW(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=0.001)
         
         for epoch in range(num_epochs):
             for i, batch in enumerate(dataloader):
@@ -388,7 +413,7 @@ def test_training_loops():
         selection_criterion = nn.MSELoss()
         vicreg_loss_fn = VICRegLoss(sim_coeff=vicreg_sim_coeff_selection, std_coeff=vicreg_std_coeff_selection, cov_coeff=vicreg_cov_coeff_selection)
         
-        optimizer = optim.Adam(
+        optimizer = optim.AdamW(
             list(state_encoder.parameters()) + 
             list(color_predictor.parameters()) + 
             list(mask_encoder.parameters()) + 
@@ -472,7 +497,7 @@ def test_training_loops():
         next_state_criterion = nn.MSELoss()
         vicreg_loss_fn_next_state = VICRegLoss(sim_coeff=vicreg_sim_coeff_next_state, std_coeff=vicreg_std_coeff_next_state, cov_coeff=vicreg_cov_coeff_next_state)
         
-        optimizer = optim.Adam(
+        optimizer = optim.AdamW(
             list(state_encoder.parameters()) + 
             list(color_predictor.parameters()) + 
             list(mask_encoder.parameters()) + 

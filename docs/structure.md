@@ -19,4 +19,6 @@ I-have-a-dreamer/
 - **src/training_loops/**: Advanced/custom training loop scripts.
 - **train_color_predictor.py**: Main entry point for training.
 - **color_predictor_config.yaml**: All configuration and hyperparameters.
-- **README.md**: Project summary and quickstart. 
+- **README.md**: Project summary and quickstart.
+
+**Note:** Reward and continuation predictors now take both the encoded state and predicted next state as input, as a sequence (for transformer) or concatenation (for MLP). 
