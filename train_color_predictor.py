@@ -59,13 +59,13 @@ def train_color_predictor():
     """
     config = load_config()
     buffer_path = config['buffer_path']
-    encoder_type = config['encoder_type']
+    #encoder_type = config['encoder_type']
     latent_dim = config['latent_dim']
     encoder_params = config['encoder_params'][encoder_type]
     num_color_selection_fns = config['num_color_selection_fns']
     num_selection_fns = config['num_selection_fns']
     num_transform_actions = config['num_transform_actions']
-    num_arc_colors = config['num_arc_colors']
+    #num_arc_colors = config['num_arc_colors']
     color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
     batch_size = config['batch_size']
     num_epochs = config['num_epochs']
