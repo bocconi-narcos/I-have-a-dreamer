@@ -61,7 +61,8 @@ def train_color_predictor():
     buffer_path = config['buffer_path']
     #encoder_type = config['encoder_type']
     latent_dim = config['latent_dim']
-    encoder_params = config['encoder_params'][encoder_type]
+    
+    encoder_params = config['encoder_params']
     num_color_selection_fns = config['num_color_selection_fns']
     num_selection_fns = config['num_selection_fns']
     num_transform_actions = config['num_transform_actions']
@@ -86,7 +87,7 @@ def train_color_predictor():
         num_color_selection_fns=num_color_selection_fns,
         num_selection_fns=num_selection_fns,
         num_transform_actions=num_transform_actions,
-        num_arc_colors=num_arc_colors,
+        num_arc_colors=11,
         state_shape=state_shape,
         mode='color_only'
     )
@@ -97,20 +98,21 @@ def train_color_predictor():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    device = torch.device('mps' if torch.cuda.is_available() else 'cpu')
-    
-    # Extract parameters for StateEncoder
-    patch_size = encoder_params.get('patch_size', 2)  # Default for ViT
-    
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
     state_encoder = StateEncoder(
-        encoder_type=encoder_type,
         image_size=image_size,
-        patch_size=patch_size,
         input_channels=input_channels,
         latent_dim=latent_dim,
         encoder_params=encoder_params
     ).to(device)
-    color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
+    color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, 
+                                     num_arc_colors=11, color_predictor_hidden_dim=color_predictor_hidden_dim).to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=learning_rate)
