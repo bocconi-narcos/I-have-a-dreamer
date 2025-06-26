@@ -64,5 +64,8 @@ class StateEncoder(nn.Module):
         else:
             raise ValueError(f"Unsupported encoder_type: {encoder_type}")
 
+        num_params = sum(p.numel() for p in self.parameters())
+        print(f"[StateEncoder] Number of parameters: {num_params}")
+
     def forward(self, x):
         return self.encoder_model(x)

@@ -36,8 +36,8 @@ class ReplayBufferDataset(Dataset):
             with open(buffer_path, 'rb') as f:
                 self.buffer = pickle.load(f)
         else:
-            print(f"Buffer file {buffer_path} not found. Generating dummy data.")
-            self.buffer = self._generate_dummy_data()
+            print(f"ERROR: Buffer file {buffer_path} not found. Please provide a valid replay buffer file.")
+            raise FileNotFoundError(f"Buffer file {buffer_path} not found.")
         
         # Limit samples if specified (for testing)
         if num_samples is not None:

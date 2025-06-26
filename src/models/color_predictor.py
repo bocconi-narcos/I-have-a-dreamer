@@ -9,6 +9,8 @@ class ColorPredictor(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, num_colors)
         )
+        num_params = sum(p.numel() for p in self.parameters())
+        print(f"[ColorPredictor] Number of parameters: {num_params}")
 
     def forward(self, latent):
         return self.mlp(latent)

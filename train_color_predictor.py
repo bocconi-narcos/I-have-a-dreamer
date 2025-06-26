@@ -124,6 +124,7 @@ def train_color_predictor():
             action_colour = batch['action_colour'].to(device)  # (B,)
             target_colour = batch['colour'].to(device)  # (B,)
 
+
             # State embedding
             if state.dim() == 3:
                 # (B, H, W) -> (B, 1, H, W) for single channel
