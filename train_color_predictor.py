@@ -9,8 +9,9 @@ from src.models.state_encoder import StateEncoder
 from src.models.color_predictor import ColorPredictor
 from src.data import ReplayBufferDataset
 from torch.utils.data import Dataset
+from src.models.action_embed import ActionEmbedder
 # --- Config Loader ---
-def load_config(config_path="unified_config.yaml"):
+def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -20,7 +21,7 @@ def one_hot(indices, num_classes):
     return torch.nn.functional.one_hot(indices, num_classes=num_classes).float()
 
 # --- Validation Metrics ---
-def evaluate(model, encoder, dataloader, device, criterion, num_color_selection_fns):
+def evaluate(model, encoder, action_embedder, dataloader, device, criterion, num_color_selection_fns):
     model.eval()
     encoder.eval()
     total_loss = 0
@@ -35,8 +36,8 @@ def evaluate(model, encoder, dataloader, device, criterion, num_color_selection_
                 state = state.unsqueeze(1)
             latent = encoder(state.float())
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
-            x = torch.cat([latent, action_colour_onehot], dim=1)
-            logits = model(x)
+            action_embedding = action_embedder(action_colour_onehot)
+            logits = model(latent, action_embedding)
             loss = criterion(logits, target_colour)
             total_loss += loss.item() * state.size(0)
             preds = torch.argmax(logits, dim=1)
@@ -73,6 +74,7 @@ def train_color_predictor():
     learning_rate = config['learning_rate']
     num_workers = config['num_workers']
     log_interval = config['log_interval']
+    action_embedding_dim = config['action_embedding_dim']
 
     # State shape (channels, H, W) or (H, W)
     image_size = encoder_params.get('image_size', [10, 10])
@@ -111,11 +113,19 @@ def train_color_predictor():
         latent_dim=latent_dim,
         encoder_params=encoder_params
     ).to(device)
-    color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, 
-                                     num_arc_colors=11, color_predictor_hidden_dim=color_predictor_hidden_dim).to(device)
+    
+    action_embedder = ActionEmbedder(num_actions=num_color_selection_fns, embed_dim=action_embedding_dim, dropout_p=0.1).to(device)
+
+    color_predictor = ColorPredictor(latent_dim, num_colors=11, hidden_dim=color_predictor_hidden_dim, action_embedding_dim=action_embedding_dim).to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=learning_rate)
+    optimizer = optim.Adam(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=learning_rate)
+
+    type_stats = {
+        "random": {"loss": 0.0, "correct": 0, "total": 0},
+        "challenge": {"loss": 0.0, "correct": 0, "total": 0}
+    }
 
     best_val_loss = float('inf')
     epochs_no_improve = 0
@@ -123,6 +133,7 @@ def train_color_predictor():
     save_path = 'best_model_color_predictor.pth'
     for epoch in range(num_epochs):
         state_encoder.train()
+        action_embedder.train()
         color_predictor.train()
         total_loss = 0
         for i, batch in enumerate(train_loader):
@@ -139,10 +150,10 @@ def train_color_predictor():
 
             # Color selection one-hot
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)  # (B, num_color_selection_fns)
+            action_embedding = action_embedder(action_colour_onehot)  # (B, 12)
 
             # Concatenate and predict
-            x = torch.cat([latent, action_colour_onehot], dim=1)  # (B, latent_dim + num_color_selection_fns)
-            logits = color_predictor(x)  # (B, num_arc_colors)
+            logits = color_predictor(latent, action_embedding)  # (B, num_arc_colors)
 
             loss = criterion(logits, target_colour)
             optimizer.zero_grad()
@@ -150,11 +161,21 @@ def train_color_predictor():
             optimizer.step()
             total_loss += loss.item() * state.size(0)
 
+            with torch.no_grad():
+                preds = torch.argmax(logits, dim=1)
+                # batch['transition_type'] is a list of strings, one per sample
+                transition_types = batch['transition_type']
+                for j, ttype in enumerate(transition_types):
+                    if ttype in type_stats:
+                        type_stats[ttype]["loss"] += loss.item()  # Optionally, you can use per-sample loss if you want more precision
+                        type_stats[ttype]["correct"] += int(preds[j].item() == target_colour[j].item())
+                        type_stats[ttype]["total"] += 1
+
             if (i + 1) % log_interval == 0:
                 print(f"Epoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}")
 
         avg_loss = total_loss / len(train_loader.dataset)
-        val_loss, val_acc = evaluate(color_predictor, state_encoder, val_loader, device, criterion, num_color_selection_fns)
+        val_loss, val_acc = evaluate(color_predictor, state_encoder, action_embedder, val_loader, device, criterion, num_color_selection_fns)
         print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -170,6 +191,14 @@ def train_color_predictor():
         if epochs_no_improve >= patience:
             print(f"Early stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
             break
+
+        for ttype, stats in type_stats.items():
+            if stats["total"] > 0:
+                avg_loss = stats["loss"] / stats["total"]
+                accuracy = stats["correct"] / stats["total"]
+                print(f"  {ttype.capitalize()} - Avg Loss: {avg_loss:.4f} | Accuracy: {accuracy:.4f} | Count: {stats['total']}")
+            else:
+                print(f"  {ttype.capitalize()} - No samples this epoch.")
 
 if __name__ == "__main__":
     train_color_predictor() 
