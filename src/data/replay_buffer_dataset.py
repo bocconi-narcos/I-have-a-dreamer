@@ -125,4 +125,8 @@ class ReplayBufferDataset(Dataset):
             next_state = torch.tensor(transition['next_state'], dtype=torch.float32)
             sample['next_state'] = next_state
         
+        # Add transition_type if present
+        transition_type = transition.get('info', {}).get('transition_type', None)
+        sample['transition_type'] = transition_type
+        
         return sample 
