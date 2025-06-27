@@ -5,14 +5,14 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 import yaml
 from src.models.state_encoder import StateEncoder
-from src.models.color_predictor import ColorPredictor
+from models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder import MaskEncoder
-from src.models.selection_mask_predictor import SelectionMaskPredictor
+from models.predictors.selection_mask_predictor import SelectionMaskPredictor
 from src.losses.vicreg import VICRegLoss
 from src.data import ReplayBufferDataset
 
 # --- Config Loader ---
-def load_config(config_path="unified_config.yaml"):
+def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -52,9 +52,8 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
             color_logits = color_predictor(color_input)
             color_loss = criterion(color_logits, target_colour)
             
-            # Selection mask prediction
-            selection_input = torch.cat([latent, action_selection_onehot], dim=1)
-            pred_latent_mask = selection_predictor(selection_input)
+            # Selection mask prediction - updated to use new signature
+            pred_latent_mask = selection_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.float())
             
             if use_vicreg and vicreg_loss_fn is not None:
@@ -84,7 +83,7 @@ def train_selection_predictor():
         4. For selection: passes ground truth selection_mask through mask encoder to get target latent mask.
         5. For color: concatenates state embedding and color action encoding, passes through color predictor MLP.
         6. Computes MSE/VICReg loss for selection and cross-entropy loss for color.
-    All model choices and hyperparameters are loaded from unified_config.yaml.
+    All model choices and hyperparameters are loaded from config.yaml.
     """
     config = load_config()
     buffer_path = config['buffer_path']
@@ -102,8 +101,6 @@ def train_selection_predictor():
     mask_encoder_type = selection_cfg['mask_encoder_type']
     mask_encoder_params = selection_cfg['mask_encoder_params'][mask_encoder_type]
     latent_mask_dim = selection_cfg['latent_mask_dim']
-    selection_mask_predictor_hidden_dim = selection_cfg['selection_mask_predictor_hidden_dim']
-    use_transformer = selection_cfg['use_transformer']
     transformer_depth = selection_cfg['transformer_depth']
     transformer_heads = selection_cfg['transformer_heads']
     transformer_dim_head = selection_cfg['transformer_dim_head']
@@ -147,11 +144,13 @@ def train_selection_predictor():
     state_encoder = StateEncoder(encoder_type, latent_dim=latent_dim, **encoder_params).to(device)
     color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
     mask_encoder = MaskEncoder(mask_encoder_type, latent_dim=latent_mask_dim, **mask_encoder_params).to(device)
+    
+    # Updated SelectionMaskPredictor initialization
     selection_mask_predictor = SelectionMaskPredictor(
-        input_dim=latent_dim + num_selection_fns,
+        state_dim=latent_dim,
+        selection_action_dim=num_selection_fns,
+        color_pred_dim=num_arc_colors,  # Assuming color prediction dimension
         latent_mask_dim=latent_mask_dim,
-        hidden_dim=selection_mask_predictor_hidden_dim,
-        use_transformer=use_transformer,
         transformer_depth=transformer_depth,
         transformer_heads=transformer_heads,
         transformer_dim_head=transformer_dim_head,
@@ -204,9 +203,8 @@ def train_selection_predictor():
             color_logits = color_predictor(color_input)
             color_loss = color_criterion(color_logits, target_colour)
             
-            # Selection mask prediction
-            selection_input = torch.cat([latent, action_selection_onehot], dim=1)
-            pred_latent_mask = selection_mask_predictor(selection_input)
+            # Selection mask prediction - updated to use new signature
+            pred_latent_mask = selection_mask_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.float())
             
             if use_vicreg:
