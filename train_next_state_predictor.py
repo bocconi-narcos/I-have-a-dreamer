@@ -5,15 +5,15 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 import yaml
 from src.models.state_encoder import StateEncoder
-from src.models.color_predictor import ColorPredictor
+from models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder import MaskEncoder
-from src.models.selection_mask_predictor import SelectionMaskPredictor
-from src.models.next_state_predictor import NextStatePredictor
+from models.predictors.selection_mask_predictor import SelectionMaskPredictor
+from models.predictors.next_state_predictor import NextStatePredictor
 from src.losses.vicreg import VICRegLoss
 from src.data import ReplayBufferDataset
 
 # --- Config Loader ---
-def load_config(config_path="unified_config.yaml"):
+def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -61,9 +61,8 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             color_logits = color_predictor(color_input)
             color_loss = color_criterion(color_logits, target_colour)
             
-            # Selection mask prediction
-            selection_input = torch.cat([latent, action_selection_onehot], dim=1)
-            pred_latent_mask = selection_predictor(selection_input)
+            # Selection mask prediction - updated to use new signature
+            pred_latent_mask = selection_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.float())
             
             if use_vicreg_selection and vicreg_loss_fn_selection is not None:
@@ -71,7 +70,7 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             else:
                 selection_loss = nn.MSELoss()(pred_latent_mask, target_latent_mask)
             
-            # Next state prediction
+            # Next state prediction - updated to use new signature
             pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
             
             if use_vicreg_next_state and vicreg_loss_fn_next_state is not None:
@@ -104,7 +103,7 @@ def train_next_state_predictor():
         5. For selection: passes ground truth selection_mask through mask encoder to get target latent mask.
         6. For next state: concatenates state embedding, transform action encoding, and predicted latent mask, passes through next state predictor.
         7. Computes losses for all three modules and backpropagates through all networks.
-    All model choices and hyperparameters are loaded from unified_config.yaml.
+    All model choices and hyperparameters are loaded from config.yaml.
     """
     config = load_config()
     buffer_path = config['buffer_path']
@@ -122,8 +121,6 @@ def train_next_state_predictor():
     mask_encoder_type = selection_cfg['mask_encoder_type']
     mask_encoder_params = selection_cfg['mask_encoder_params'][mask_encoder_type]
     latent_mask_dim = selection_cfg['latent_mask_dim']
-    selection_mask_predictor_hidden_dim = selection_cfg['selection_mask_predictor_hidden_dim']
-    use_transformer_selection = selection_cfg['use_transformer']
     transformer_depth_selection = selection_cfg['transformer_depth']
     transformer_heads_selection = selection_cfg['transformer_heads']
     transformer_dim_head_selection = selection_cfg['transformer_dim_head']
@@ -191,21 +188,26 @@ def train_next_state_predictor():
     state_encoder = StateEncoder(encoder_type, latent_dim=latent_dim, **encoder_params).to(device)
     color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
     mask_encoder = MaskEncoder(mask_encoder_type, latent_dim=latent_mask_dim, **mask_encoder_params).to(device)
+    
+    # Updated SelectionMaskPredictor initialization
     selection_mask_predictor = SelectionMaskPredictor(
-        input_dim=latent_dim + num_selection_fns,
+        state_dim=latent_dim,
+        selection_action_dim=num_selection_fns,
+        color_pred_dim=num_arc_colors,  # Assuming color prediction dimension
         latent_mask_dim=latent_mask_dim,
-        hidden_dim=selection_mask_predictor_hidden_dim,
-        use_transformer=use_transformer_selection,
         transformer_depth=transformer_depth_selection,
         transformer_heads=transformer_heads_selection,
         transformer_dim_head=transformer_dim_head_selection,
         transformer_mlp_dim=transformer_mlp_dim_selection,
         dropout=transformer_dropout_selection
     ).to(device)
+    
+    # Updated NextStatePredictor initialization
     next_state_predictor = NextStatePredictor(
-        latent_dim=latent_dim,
+        state_dim=latent_dim,
         num_transform_actions=num_transform_actions,
         latent_mask_dim=latent_mask_dim_next_state,
+        latent_dim=latent_dim,
         transformer_depth=transformer_depth_next_state,
         transformer_heads=transformer_heads_next_state,
         transformer_dim_head=transformer_dim_head_next_state,
@@ -269,9 +271,8 @@ def train_next_state_predictor():
             color_logits = color_predictor(color_input)
             color_loss = color_criterion(color_logits, target_colour)
             
-            # Selection mask prediction
-            selection_input = torch.cat([latent, action_selection_onehot], dim=1)
-            pred_latent_mask = selection_mask_predictor(selection_input)
+            # Selection mask prediction - updated to use new signature
+            pred_latent_mask = selection_mask_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.float())
             
             if use_vicreg_selection:
@@ -279,7 +280,7 @@ def train_next_state_predictor():
             else:
                 selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
             
-            # Next state prediction
+            # Next state prediction - updated to use new signature
             pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
             
             if use_vicreg_next_state:
