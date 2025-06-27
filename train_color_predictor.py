@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split
 import yaml
 import pickle
 from src.models.state_encoder import StateEncoder
-from src.models.color_predictor import ColorPredictor
+from src.models.color_predictor import ColorPredictor, TransformerColorPredictor
 from src.data import ReplayBufferDataset
 from torch.utils.data import Dataset
 from src.models.action_embed import ActionEmbedder
@@ -24,6 +24,7 @@ def one_hot(indices, num_classes):
 def evaluate(model, encoder, action_embedder, dataloader, device, criterion, num_color_selection_fns):
     model.eval()
     encoder.eval()
+    action_embedder.eval()
     total_loss = 0
     correct = 0
     total = 0
@@ -117,10 +118,15 @@ def train_color_predictor():
     action_embedder = ActionEmbedder(num_actions=num_color_selection_fns, embed_dim=action_embedding_dim, dropout_p=0.1).to(device)
 
     color_predictor = ColorPredictor(latent_dim, num_colors=11, hidden_dim=color_predictor_hidden_dim, action_embedding_dim=action_embedding_dim).to(device)
+    #color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=learning_rate)
-    optimizer = optim.Adam(list(state_encoder.parameters()) + list(color_predictor.parameters()), lr=learning_rate)
+    optimizer = optim.AdamW(
+        list(state_encoder.parameters()) + 
+        list(action_embedder.parameters()) + 
+        list(color_predictor.parameters()), 
+        lr=learning_rate
+    )
 
     type_stats = {
         "random": {"loss": 0.0, "correct": 0, "total": 0},
@@ -154,7 +160,7 @@ def train_color_predictor():
 
             # Concatenate and predict
             logits = color_predictor(latent, action_embedding)  # (B, num_arc_colors)
-
+            
             loss = criterion(logits, target_colour)
             optimizer.zero_grad()
             loss.backward()
@@ -182,6 +188,7 @@ def train_color_predictor():
             epochs_no_improve = 0
             torch.save({
                 'state_encoder': state_encoder.state_dict(),
+                'action_embedder': action_embedder.state_dict(),
                 'color_predictor': color_predictor.state_dict()
             }, save_path)
             print(f"New best model saved to {save_path}")

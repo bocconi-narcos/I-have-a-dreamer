@@ -50,7 +50,7 @@ class ActionEmbedder(nn.Module):
         """
         # Compute embeddings
         if actions.dtype in (torch.long, torch.int):
-            embed = torch.embedding(self.weight, actions)
+            embed = torch.nn.functional.embedding(actions, self.weight)
         else:
             # assume float one-hot vectors
             original_shape = actions.shape
