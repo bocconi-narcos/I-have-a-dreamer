@@ -5,17 +5,17 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 import yaml
 from src.models.state_encoder import StateEncoder
-from src.models.color_predictor import ColorPredictor
+from models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder import MaskEncoder
-from src.models.selection_mask_predictor import SelectionMaskPredictor
-from src.models.next_state_predictor import NextStatePredictor
-from src.models.reward_predictor import RewardPredictor
-from src.models.continuation_predictor import ContinuationPredictor
+from models.predictors.selection_mask_predictor import SelectionMaskPredictor
+from models.predictors.next_state_predictor import NextStatePredictor
+from models.predictors.reward_predictor import RewardPredictor
+from models.predictors.continuation_predictor import ContinuationPredictor
 from src.losses.vicreg import VICRegLoss
 from src.data import ReplayBufferDataset
 import traceback
 
-def load_config(config_path="unified_config.yaml"):
+def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -42,8 +42,6 @@ def train_full_model():
         mask_encoder_type = selection_cfg['mask_encoder_type']
         mask_encoder_params = selection_cfg['mask_encoder_params'][mask_encoder_type]
         latent_mask_dim = selection_cfg['latent_mask_dim']
-        selection_mask_predictor_hidden_dim = selection_cfg['selection_mask_predictor_hidden_dim']
-        use_transformer_selection = selection_cfg['use_transformer']
         transformer_depth_selection = selection_cfg['transformer_depth']
         transformer_heads_selection = selection_cfg['transformer_heads']
         transformer_dim_head_selection = selection_cfg['transformer_dim_head']
@@ -69,23 +67,25 @@ def train_full_model():
 
         # Reward predictor config
         reward_cfg = config['reward_predictor']
+        reward_latent_dim = reward_cfg['latent_dim']
         reward_hidden_dim = reward_cfg['hidden_dim']
-        reward_use_transformer = reward_cfg['use_transformer']
         reward_transformer_depth = reward_cfg['transformer_depth']
         reward_transformer_heads = reward_cfg['transformer_heads']
         reward_transformer_dim_head = reward_cfg['transformer_dim_head']
         reward_transformer_mlp_dim = reward_cfg['transformer_mlp_dim']
         reward_transformer_dropout = reward_cfg['transformer_dropout']
+        reward_proj_dim = reward_cfg.get('proj_dim', None)
 
         # Continuation predictor config
         continuation_cfg = config['continuation_predictor']
+        continuation_latent_dim = continuation_cfg['latent_dim']
         continuation_hidden_dim = continuation_cfg['hidden_dim']
-        continuation_use_transformer = continuation_cfg['use_transformer']
         continuation_transformer_depth = continuation_cfg['transformer_depth']
         continuation_transformer_heads = continuation_cfg['transformer_heads']
         continuation_transformer_dim_head = continuation_cfg['transformer_dim_head']
         continuation_transformer_mlp_dim = continuation_cfg['transformer_mlp_dim']
         continuation_transformer_dropout = continuation_cfg['transformer_dropout']
+        continuation_proj_dim = continuation_cfg.get('proj_dim', None)
 
         batch_size = config['batch_size']
         num_epochs = config['num_epochs']
@@ -133,46 +133,55 @@ def train_full_model():
         state_encoder = StateEncoder(encoder_type, latent_dim=latent_dim, **encoder_params).to(device)
         color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
         mask_encoder = MaskEncoder(mask_encoder_type, latent_dim=latent_mask_dim, **mask_encoder_params).to(device)
+        
+        # Updated SelectionMaskPredictor initialization
         selection_mask_predictor = SelectionMaskPredictor(
-            input_dim=latent_dim + num_selection_fns,
+            state_dim=latent_dim,
+            selection_action_dim=num_selection_fns,
+            color_pred_dim=num_arc_colors,  # Assuming color prediction dimension
             latent_mask_dim=latent_mask_dim,
-            hidden_dim=selection_mask_predictor_hidden_dim,
-            use_transformer=use_transformer_selection,
             transformer_depth=transformer_depth_selection,
             transformer_heads=transformer_heads_selection,
             transformer_dim_head=transformer_dim_head_selection,
             transformer_mlp_dim=transformer_mlp_dim_selection,
             dropout=transformer_dropout_selection
         ).to(device)
+        
+        # Updated NextStatePredictor initialization
         next_state_predictor = NextStatePredictor(
-            latent_dim=latent_dim,
+            state_dim=latent_dim,
             num_transform_actions=num_transform_actions,
             latent_mask_dim=latent_mask_dim_next_state,
+            latent_dim=latent_dim,
             transformer_depth=transformer_depth_next_state,
             transformer_heads=transformer_heads_next_state,
             transformer_dim_head=transformer_dim_head_next_state,
             transformer_mlp_dim=transformer_mlp_dim_next_state,
             dropout=transformer_dropout_next_state
         ).to(device)
+        
+        # Updated RewardPredictor initialization
         reward_predictor = RewardPredictor(
-            input_dim=latent_dim,
+            latent_dim=reward_latent_dim,
             hidden_dim=reward_hidden_dim,
-            use_transformer=reward_use_transformer,
             transformer_depth=reward_transformer_depth,
             transformer_heads=reward_transformer_heads,
             transformer_dim_head=reward_transformer_dim_head,
             transformer_mlp_dim=reward_transformer_mlp_dim,
-            dropout=reward_transformer_dropout
+            dropout=reward_transformer_dropout,
+            proj_dim=reward_proj_dim
         ).to(device)
+        
+        # Updated ContinuationPredictor initialization
         continuation_predictor = ContinuationPredictor(
-            input_dim=latent_dim,
+            latent_dim=continuation_latent_dim,
             hidden_dim=continuation_hidden_dim,
-            use_transformer=continuation_use_transformer,
             transformer_depth=continuation_transformer_depth,
             transformer_heads=continuation_transformer_heads,
             transformer_dim_head=continuation_transformer_dim_head,
             transformer_mlp_dim=continuation_transformer_mlp_dim,
-            dropout=continuation_transformer_dropout
+            dropout=continuation_transformer_dropout,
+            proj_dim=continuation_proj_dim
         ).to(device)
         print("All models initialized successfully.")
 
@@ -248,38 +257,27 @@ def train_full_model():
                     color_logits = color_predictor(color_input)
                     color_loss = color_criterion(color_logits, target_colour)
 
-                    # Selection mask prediction
-                    selection_input = torch.cat([latent, action_selection_onehot], dim=1)
-                    pred_latent_mask = selection_mask_predictor(selection_input)
+                    # Selection mask prediction - updated to use new signature
+                    pred_latent_mask = selection_mask_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
                     target_latent_mask = mask_encoder(selection_mask.float())
                     if use_vicreg_selection:
                         selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
                     else:
                         selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
 
-                    # Next state prediction
+                    # Next state prediction - updated to use new signature
                     pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
                     if use_vicreg_next_state:
                         next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
                     else:
                         next_state_loss = next_state_criterion(pred_next_latent, latent_next)
 
-                    # Reward prediction
-                    # Prepare input for RewardPredictor: (B, 2, latent_dim) for transformer, (B, 2*latent_dim) for MLP
-                    if reward_use_transformer:
-                        reward_input = torch.stack([latent, pred_next_latent], dim=1)  # (B, 2, latent_dim)
-                    else:
-                        reward_input = torch.cat([latent, pred_next_latent], dim=1)    # (B, 2*latent_dim)
-                    pred_reward = reward_predictor(reward_input)
+                    # Reward prediction - updated to use new signature
+                    pred_reward = reward_predictor(latent, pred_next_latent)
                     reward_loss = reward_criterion(pred_reward, reward)
 
-                    # Continuation prediction
-                    # Prepare input for ContinuationPredictor: (B, 2, latent_dim) for transformer, (B, 2*latent_dim) for MLP
-                    if continuation_use_transformer:
-                        continuation_input = torch.stack([latent, pred_next_latent], dim=1)  # (B, 2, latent_dim)
-                    else:
-                        continuation_input = torch.cat([latent, pred_next_latent], dim=1)    # (B, 2*latent_dim)
-                    pred_continuation = continuation_predictor(continuation_input)
+                    # Continuation prediction - updated to use new signature
+                    pred_continuation = continuation_predictor(latent, pred_next_latent)
                     continuation_loss = continuation_criterion(pred_continuation, 1.0 - done)  # 1-done: 1=continue, 0=done
 
                     print(f"  Losses: color={color_loss.item():.4f}, selection={selection_loss.item():.4f}, next_state={next_state_loss.item():.4f}, reward={reward_loss.item():.4f}, continuation={continuation_loss.item():.4f}")
@@ -345,8 +343,9 @@ def train_full_model():
                         color_input = torch.cat([latent, action_colour_onehot], dim=1)
                         color_logits = color_predictor(color_input)
                         color_loss = color_criterion(color_logits, target_colour)
-                        selection_input = torch.cat([latent, action_selection_onehot], dim=1)
-                        pred_latent_mask = selection_mask_predictor(selection_input)
+                        
+                        # Updated validation calls
+                        pred_latent_mask = selection_mask_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
                         target_latent_mask = mask_encoder(selection_mask.float())
                         if use_vicreg_selection:
                             selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
@@ -357,19 +356,9 @@ def train_full_model():
                             next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
                         else:
                             next_state_loss = next_state_criterion(pred_next_latent, latent_next)
-                        # Reward prediction
-                        if reward_use_transformer:
-                            reward_input = torch.stack([latent, pred_next_latent], dim=1)  # (B, 2, latent_dim)
-                        else:
-                            reward_input = torch.cat([latent, pred_next_latent], dim=1)    # (B, 2*latent_dim)
-                        pred_reward = reward_predictor(reward_input)
+                        pred_reward = reward_predictor(latent, pred_next_latent)
                         reward_loss = reward_criterion(pred_reward, reward)
-                        # Continuation prediction
-                        if continuation_use_transformer:
-                            continuation_input = torch.stack([latent, pred_next_latent], dim=1)  # (B, 2, latent_dim)
-                        else:
-                            continuation_input = torch.cat([latent, pred_next_latent], dim=1)    # (B, 2*latent_dim)
-                        pred_continuation = continuation_predictor(continuation_input)
+                        pred_continuation = continuation_predictor(latent, pred_next_latent)
                         continuation_loss = continuation_criterion(pred_continuation, 1.0 - done)
                         val_color_loss += color_loss.item() * state.size(0)
                         val_selection_loss += selection_loss.item() * state.size(0)
