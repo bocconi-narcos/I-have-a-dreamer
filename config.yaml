@@ -64,8 +64,7 @@ selection_mask:
       patch_size: 2
       input_channels: 1
       image_size: [10, 10]
-  selection_mask_predictor_hidden_dim: 128
-  use_transformer: false
+  # Transformer parameters for selection mask predictor
   transformer_depth: 2
   transformer_heads: 2
   transformer_dim_head: 32
@@ -91,31 +90,27 @@ next_state:
   vicreg_std_coeff: 25.0
   vicreg_cov_coeff: 1.0
 
-# Reward Predictor Module
+# Reward Predictor Module (Transformer-based)
 reward_predictor:
-  hidden_dim: 128
-  use_transformer: false
+  latent_dim: 128  # Dimension of latent vectors (z_t, z_{t+1})
+  hidden_dim: 128  # Hidden dimension for transformer
   transformer_depth: 2
   transformer_heads: 2
   transformer_dim_head: 64
   transformer_mlp_dim: 128
   transformer_dropout: 0.1
-  mlp_hidden_dims: [128, 64]
-  activation_fn_str: "relu"
-  dropout_rate: 0.1
+  proj_dim: null  # If provided, project latents to this dim
 
-# Continuation Predictor Module
+# Continuation Predictor Module (Transformer-based)
 continuation_predictor:
-  hidden_dim: 128
-  use_transformer: false
+  latent_dim: 128  # Dimension of latent vectors (z_t, z_{t+1})
+  hidden_dim: 128  # Hidden dimension for transformer
   transformer_depth: 2
   transformer_heads: 2
   transformer_dim_head: 64
   transformer_mlp_dim: 128
   transformer_dropout: 0.1
-  mlp_hidden_dims: [128, 64]
-  activation_fn_str: "relu"
-  dropout_rate: 0.1
+  proj_dim: null  # If provided, project latents to this dim
 
 # Training (Shared across all modules)
 batch_size: 32
