@@ -17,12 +17,12 @@ class StateEncoder(nn.Module):
     learned positional embedding for each pixel. The resulting sequence of tokens is
     processed by a ViT backbone.
     """
-    def _init_(self,
+    def __init__(self,
                  image_size,  # int or tuple (h, w)
                  input_channels: int,
                  latent_dim: int,
                  encoder_params: dict = None):
-        super()._init_()
+        super().__init__()
 
         # --- Hardcoded & Validated Parameters based on new requirements ---
 
@@ -51,6 +51,36 @@ class StateEncoder(nn.Module):
             embedding_dim=latent_dim  # Embed directly into the ViT's latent space
         )
 
+        # 2. Grid Statistics Embeddings
+        # For unique color count (0-10 possible colors, excluding -1)
+        self.unique_count_embedding = nn.Embedding(
+            num_embeddings=11,  # 0 to 10 unique colors
+            embedding_dim=latent_dim
+        )
+        
+        # For most/least common colors (0-9, since we exclude -1)
+        self.most_common_color_embedding = nn.Embedding(
+            num_embeddings=10,  # colors 0-9
+            embedding_dim=latent_dim
+        )
+        
+        self.least_common_color_embedding = nn.Embedding(
+            num_embeddings=10,  # colors 0-9
+            embedding_dim=latent_dim
+        )
+        
+        # For unpadded grid dimensions (assuming reasonable max size)
+        max_dim = max(self._image_size_tuple[0], self._image_size_tuple[1])
+        self.height_embedding = nn.Embedding(
+            num_embeddings=max_dim + 1,  # 0 to max_dim
+            embedding_dim=latent_dim
+        )
+        
+        self.width_embedding = nn.Embedding(
+            num_embeddings=max_dim + 1,  # 0 to max_dim
+            embedding_dim=latent_dim
+        )
+        
         # 2. ViT Backbone for processing the sequence of embedded pixels
         # The ViT internally creates and manages the learned positional embeddings.
         vit_params = {
@@ -97,19 +127,70 @@ class StateEncoder(nn.Module):
         # Look up color embedding for each pixel: (B, H, W) -> (B, H, W, D)
         x_emb = self.color_embedding(pixel_indices)
 
-        # --- 2. Reshape into a Sequence for the Transformer ---
+        # --- 2. Calculate Grid Statistics and Create Statistic Tokens ---
+        stats = self._calculate_grid_statistics(x)
+        
+        # Create embedding tokens for statistics
+        unique_count_tokens = self.unique_count_embedding(stats['unique_counts']).unsqueeze(1)  # (B, 1, D)
+        most_common_tokens = self.most_common_color_embedding(stats['most_common_colors']).unsqueeze(1)  # (B, 1, D)
+        least_common_tokens = self.least_common_color_embedding(stats['least_common_colors']).unsqueeze(1)  # (B, 1, D)
+        height_tokens = self.height_embedding(stats['unpadded_heights']).unsqueeze(1)  # (B, 1, D)
+        width_tokens = self.width_embedding(stats['unpadded_widths']).unsqueeze(1)  # (B, 1, D)
+        
+        # Concatenate all statistic tokens
+        stat_tokens = torch.cat([
+            unique_count_tokens,
+            most_common_tokens, 
+            least_common_tokens,
+            height_tokens,
+            width_tokens
+        ], dim=1)  # (B, 5, D)
+
+        # --- 3. Reshape into a Sequence for the Transformer ---
         # (B, H, W, D) -> (B, N, D), where N = H*W is the sequence length
         x_seq = x_emb.view(b, h * w, -1)
+        
+        # Prepend statistic tokens to the pixel sequence
+        x_seq = torch.cat([stat_tokens, x_seq], dim=1)  # (B, 5+N, D)
 
-        # --- 3. Manually Execute ViT Logic (Bypassing its Image Patcher) ---
+        # --- 4. Manually Execute ViT Logic (Bypassing its Image Patcher) ---
 
         # Prepend the [CLS] token for classification/pooling
         cls_tokens = repeat(self.encoder_model.cls_token, '1 1 d -> b 1 d', b=b)
         x_with_cls = torch.cat((cls_tokens, x_seq), dim=1)
 
         # Add positional embeddings (color_embedding + pos_embedding)
-        # ViT's pos_embedding shape is (1, N+1, D), which broadcasts correctly.
-        x_with_pos = x_with_cls + self.encoder_model.pos_embedding
+        # Note: We need to adjust pos_embedding size since we added 5 statistic tokens
+        # ViT's original pos_embedding shape is (1, N+1, D) for N patches + 1 CLS token
+        # Now we have: 1 CLS + 5 stats + N pixels = 6+N tokens total
+        original_pos_emb = self.encoder_model.pos_embedding  # (1, original_N+1, D)
+        
+        # We need pos embeddings for: 1 CLS + 5 stats + H*W pixels
+        required_pos_tokens = 1 + 5 + h * w
+        
+        if original_pos_emb.size(1) != required_pos_tokens:
+            # Create extended positional embeddings
+            # Use the CLS pos embedding for CLS token, then create new ones for stats,
+            # then use the original patch embeddings for pixels
+            cls_pos = original_pos_emb[:, 0:1, :]  # (1, 1, D)
+            
+            # For statistics, we can interpolate or use learnable parameters
+            # Here we'll use the mean of original patch embeddings as initialization
+            if original_pos_emb.size(1) > 1:
+                patch_pos_mean = original_pos_emb[:, 1:, :].mean(dim=1, keepdim=True)  # (1, 1, D)
+                stats_pos = patch_pos_mean.repeat(1, 5, 1)  # (1, 5, D)
+                pixel_pos = original_pos_emb[:, 1:, :]  # (1, original_N, D)
+            else:
+                # Fallback if original pos embedding only has CLS
+                stats_pos = torch.zeros(1, 5, original_pos_emb.size(-1), device=original_pos_emb.device)
+                pixel_pos = torch.zeros(1, h*w, original_pos_emb.size(-1), device=original_pos_emb.device)
+            
+            # Combine all positional embeddings
+            extended_pos_emb = torch.cat([cls_pos, stats_pos, pixel_pos], dim=1)
+        else:
+            extended_pos_emb = original_pos_emb
+        
+        x_with_pos = x_with_cls + extended_pos_emb
         x_dropped_out = self.encoder_model.dropout(x_with_pos)
 
         # Pass through the main transformer blocks
@@ -124,3 +205,75 @@ class StateEncoder(nn.Module):
             raise ValueError(f"Unknown pooling type: {self.encoder_model.pool}")
 
         return latent_representation
+
+    def _calculate_grid_statistics(self, x: torch.Tensor):
+        """
+        Calculate grid statistics for each image in the batch.
+        
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, 1, H, W)
+            
+        Returns:
+            dict: Dictionary containing statistics for each batch item
+        """
+        b, _, h, w = x.shape
+        pixel_values = x.squeeze(1)  # (B, H, W)
+        
+        statistics = {
+            'unique_counts': [],
+            'most_common_colors': [],
+            'least_common_colors': [],
+            'unpadded_heights': [],
+            'unpadded_widths': []
+        }
+        
+        for i in range(b):
+            grid = pixel_values[i]  # (H, W)
+            
+            # Find unpadded dimensions by finding the rightmost and bottommost non-(-1) pixels
+            non_padding_mask = (grid != -1)
+            
+            if non_padding_mask.any():
+                # Find the last row and column that contain non-(-1) values
+                rows_with_content = non_padding_mask.any(dim=1)  # (H,)
+                cols_with_content = non_padding_mask.any(dim=0)  # (W,)
+                
+                unpadded_height = rows_with_content.nonzero(as_tuple=False).max().item() + 1
+                unpadded_width = cols_with_content.nonzero(as_tuple=False).max().item() + 1
+            else:
+                # Edge case: entire grid is -1
+                unpadded_height = 0
+                unpadded_width = 0
+            
+            # Extract non-padding values for color statistics
+            non_padding_values = grid[non_padding_mask]
+            
+            if len(non_padding_values) > 0:
+                # Get unique colors and their counts
+                unique_colors, counts = torch.unique(non_padding_values, return_counts=True)
+                
+                # Number of unique colors
+                num_unique = len(unique_colors)
+                
+                # Most and least common colors
+                max_count_idx = counts.argmax()
+                min_count_idx = counts.argmin()
+                most_common = unique_colors[max_count_idx].item()
+                least_common = unique_colors[min_count_idx].item()
+            else:
+                # Edge case: no non-padding values
+                num_unique = 0
+                most_common = 0  # Default to color 0
+                least_common = 0  # Default to color 0
+            
+            statistics['unique_counts'].append(num_unique)
+            statistics['most_common_colors'].append(most_common)
+            statistics['least_common_colors'].append(least_common)
+            statistics['unpadded_heights'].append(unpadded_height)
+            statistics['unpadded_widths'].append(unpadded_width)
+        
+        # Convert to tensors
+        for key in statistics:
+            statistics[key] = torch.tensor(statistics[key], device=x.device, dtype=torch.long)
+        
+        return statistics
