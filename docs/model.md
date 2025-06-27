@@ -1,55 +1,61 @@
 # Model Architecture
 
-The model consists of four main components:
+The model consists of five main components, all using modern Transformer-based architectures:
 
 ## 1. State Encoder
 - Configurable as MLP, CNN, or ViT.
 - Converts the grid state into a latent vector.
-- Parameters are set in `color_predictor_config.yaml` under `encoder_params`.
+- Parameters are set in `config.yaml` under `encoder_params`.
 
 ## 2. Action Encoding
-- The color selection index (`action['colour']`) and transform index (`action['transform']`) are one-hot encoded.
-- The number of color selection and transform functions is set by `num_color_selection_fns` and `num_transform_fns`.
+- The color selection index (`action['colour']`), selection index (`action['selection']`), and transform index (`action['transform']`) are one-hot encoded.
+- The number of functions is set by `num_color_selection_fns`, `num_selection_fns`, and `num_transform_actions`.
 
-## 3. Selection Mask Prediction (NEW)
-- Takes the latent state and one-hot selection action as input.
-- Predicts a latent mask representation using an MLP or transformer block.
-- The ground truth selection mask is encoded by a Mask Encoder (configurable: MLP, CNN, ViT) to produce the target latent mask.
-- Loss is MSE or optionally VICReg (configurable).
-
-## 4. Color Predictor
+## 3. Color Predictor
 - An MLP that takes the concatenated state embedding and color action encoding.
 - Outputs a probability distribution over possible colors (set by `num_arc_colors`).
 
-## 5. Next State Predictor (Transformation Prediction Module)
-- A transformer-based module that takes the current latent state, one-hot transform action, and (optionally) a latent mask.
+## 4. Selection Mask Predictor (Transformer-based)
+- Takes the encoded state, selection action one-hot, and color prediction as separate inputs.
+- Projects inputs to the same dimension if needed.
+- Stacks as sequence of length 2: `[encoded_state, concat(selection_action, color_pred)]`.
+- Uses Transformer encoder with positional encodings.
+- Outputs a latent mask representation.
+- The ground truth selection mask is encoded by a Mask Encoder (configurable: MLP, CNN, ViT) to produce the target latent mask.
+- Loss is MSE or optionally VICReg (configurable).
+
+## 5. Next State Predictor (Transformer-based)
+- Takes the encoded state, transform action one-hot, and predicted latent mask as separate inputs.
+- Projects inputs to the same dimension if needed.
+- Stacks as sequence of length 2: `[encoded_state, concat(transform_action, latent_mask)]`.
+- Uses Transformer encoder with positional encodings.
 - Outputs a predicted latent next state.
 - Loss is MSE or optionally VICReg (configurable).
 
-## Reward Predictor
+## 6. Reward Predictor (Transformer-based)
+- Takes two latent vectors (`z_t`, `z_{t+1}`) as separate inputs.
+- Projects to the same dimension if needed.
+- Stacks as sequence of length 2, prepends CLS token, adds positional encodings.
+- Uses Transformer encoder to model interactions.
+- Outputs a scalar reward prediction.
+- Uses MLP head on CLS token output.
 
-The reward predictor now takes **both** the encoded state and the predicted next latent state as input, allowing the transformer to attend to both.
-
-- **Transformer mode:** Input is a tensor of shape `(B, 2, latent_dim)`, where the second dimension is `[encoded_state, predicted_next_state]`.
-- **MLP mode:** Input is a tensor of shape `(B, 2*latent_dim)`, which is the concatenation of `encoded_state` and `predicted_next_state`.
-
-**Output:** (B,)
-
-## Continuation Predictor
-
-The continuation predictor now takes **both** the encoded state and the predicted next latent state as input, allowing the transformer to attend to both.
-
-- **Transformer mode:** Input is a tensor of shape `(B, 2, latent_dim)`, where the second dimension is `[encoded_state, predicted_next_state]`.
-- **MLP mode:** Input is a tensor of shape `(B, 2*latent_dim)`, which is the concatenation of `encoded_state` and `predicted_next_state`.
-
-**Output:** (B,)
+## 7. Continuation Predictor (Transformer-based)
+- Takes two latent vectors (`z_t`, `z_{t+1}`) as separate inputs.
+- Projects to the same dimension if needed.
+- Stacks as sequence of length 2, prepends CLS token, adds positional encodings.
+- Uses Transformer encoder to model interactions.
+- Outputs a probability of continuation (boolean).
+- Uses MLP head + sigmoid on CLS token output.
 
 ## Data Flow
 1. State → State Encoder → Latent Vector
 2. Action['colour'] → One-hot Encoding
-3. [Latent Vector, Color One-hot] → Concatenation → Color Predictor → Output
+3. [Latent Vector, Color One-hot] → Concatenation → Color Predictor → Color Prediction
 4. Action['selection'] → One-hot Encoding
-5. [Latent Vector, Selection One-hot] → Concatenation → Selection Mask Predictor → Predicted Latent Mask
+5. [Latent Vector, Selection One-hot, Color Prediction] → Selection Mask Predictor (Transformer) → Predicted Latent Mask
 6. Selection Mask → Mask Encoder → Target Latent Mask
 7. Action['transform'] → One-hot Encoding
-8. [Latent Vector, Transform One-hot, (Latent Mask)] → Concatenation → Next State Predictor (Transformer) → Predicted Next Latent 
+8. [Latent Vector, Transform One-hot, Latent Mask] → Next State Predictor (Transformer) → Predicted Next Latent
+9. [Latent Vector, Predicted Next Latent] → Reward Predictor (Transformer) → Reward Prediction
+10. [Latent Vector, Predicted Next Latent] → Continuation Predictor (Transformer) → Continuation Probability 
