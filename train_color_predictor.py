@@ -10,6 +10,8 @@ from src.models.color_predictor import ColorPredictor, TransformerColorPredictor
 from src.data import ReplayBufferDataset
 from torch.utils.data import Dataset
 from src.models.action_embed import ActionEmbedder
+import wandb
+
 # --- Config Loader ---
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
@@ -117,8 +119,8 @@ def train_color_predictor():
     
     action_embedder = ActionEmbedder(num_actions=num_color_selection_fns, embed_dim=action_embedding_dim, dropout_p=0.1).to(device)
 
-    color_predictor = ColorPredictor(latent_dim, num_colors=11, hidden_dim=color_predictor_hidden_dim, action_embedding_dim=action_embedding_dim).to(device)
-    #color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
+    #color_predictor = ColorPredictor(latent_dim, num_colors=11, hidden_dim=color_predictor_hidden_dim, action_embedding_dim=action_embedding_dim).to(device)
+    color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(
@@ -137,6 +139,7 @@ def train_color_predictor():
     epochs_no_improve = 0
     patience = 10
     save_path = 'best_model_color_predictor.pth'
+    wandb.init(project="color_predictor", config=config)
     for epoch in range(num_epochs):
         state_encoder.train()
         action_embedder.train()
@@ -165,6 +168,15 @@ def train_color_predictor():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            # Log gradients to wandb
+            for name, model in zip([
+                'state_encoder', 'action_embedder', 'color_predictor'],
+                [state_encoder, action_embedder, color_predictor]):
+                for param_name, param in model.named_parameters():
+                    if param.grad is not None:
+                        wandb.log({f"gradients/{name}/{param_name}": wandb.Histogram(param.grad.cpu().data.numpy())}, step=epoch * len(train_loader) + i)
+
             total_loss += loss.item() * state.size(0)
 
             with torch.no_grad():
@@ -206,6 +218,8 @@ def train_color_predictor():
                 print(f"  {ttype.capitalize()} - Avg Loss: {avg_loss:.4f} | Accuracy: {accuracy:.4f} | Count: {stats['total']}")
             else:
                 print(f"  {ttype.capitalize()} - No samples this epoch.")
+
+    wandb.finish()
 
 if __name__ == "__main__":
     train_color_predictor() 

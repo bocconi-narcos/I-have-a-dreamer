@@ -20,3 +20,5 @@ gymnasium>=0.26  # Only if using RL environments
 typing-extensions>=4.0 
 
 einops>=0.4.1  # For tensor manipulation in ViT encoder
+
+wandb

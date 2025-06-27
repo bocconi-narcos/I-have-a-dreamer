@@ -17,12 +17,12 @@ class StateEncoder(nn.Module):
     learned positional embedding for each pixel. The resulting sequence of tokens is
     processed by a ViT backbone.
     """
-    def __init__(self,
+    def _init_(self,
                  image_size,  # int or tuple (h, w)
                  input_channels: int,
                  latent_dim: int,
                  encoder_params: dict = None):
-        super().__init__()
+        super()._init_()
 
         # --- Hardcoded & Validated Parameters based on new requirements ---
 

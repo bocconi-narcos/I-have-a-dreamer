@@ -1,0 +1,172 @@
+_wandb:
+    value:
+        cli_version: 0.19.6
+        m: []
+        python_version: 3.12.9
+        t:
+            "1":
+                - 1
+                - 55
+            "2":
+                - 1
+                - 55
+            "3":
+                - 16
+                - 23
+                - 55
+                - 61
+            "4": 3.12.9
+            "5": 0.19.6
+            "8":
+                - 5
+            "12": 0.19.6
+            "13": darwin-arm64
+action_embedding_dim:
+    value: 32
+batch_size:
+    value: 32
+buffer_path:
+    value: data/buffer.pkl
+color_predictor:
+    value:
+        hidden_dim: 128
+color_predictor_training:
+    value:
+        best_model_save_path: best_model_color_predictor.pth
+        early_stopping_patience: 10
+continuation_predictor:
+    value:
+        activation_fn_str: relu
+        dropout_rate: 0.1
+        hidden_dim: 128
+        mlp_hidden_dims:
+            - 128
+            - 64
+        transformer_depth: 2
+        transformer_dim_head: 64
+        transformer_dropout: 0.1
+        transformer_heads: 2
+        transformer_mlp_dim: 128
+        use_transformer: false
+encoder_params:
+    value:
+        depth: 2
+        dropout: 0.3
+        emb_dropout: 0.3
+        heads: 4
+        image_size:
+            - 10
+            - 10
+        input_channels: 1
+        mlp_dim: 512
+        pool: cls
+encoder_type:
+    value: vit
+full_model_training:
+    value:
+        best_model_save_path: best_model_full_model.pth
+        early_stopping_patience: 10
+latent_dim:
+    value: 128
+learning_rate:
+    value: 0.001
+log_interval:
+    value: 10
+next_state:
+    value:
+        latent_mask_dim: 0
+        loss_type: mse
+        transformer_depth: 2
+        transformer_dim_head: 64
+        transformer_dropout: 0.1
+        transformer_heads: 2
+        transformer_mlp_dim: 128
+        use_vicreg: false
+        vicreg_cov_coeff: 1
+        vicreg_sim_coeff: 25
+        vicreg_std_coeff: 25
+next_state_predictor_training:
+    value:
+        best_model_save_path: best_model_next_state_predictor.pth
+        early_stopping_patience: 10
+num_arc_colors:
+    value: 10
+num_color_selection_fns:
+    value: 22
+num_epochs:
+    value: 10
+num_selection_fns:
+    value: 8
+num_transform_actions:
+    value: 8
+num_workers:
+    value: 1
+reward_predictor:
+    value:
+        activation_fn_str: relu
+        dropout_rate: 0.1
+        hidden_dim: 128
+        mlp_hidden_dims:
+            - 128
+            - 64
+        transformer_depth: 2
+        transformer_dim_head: 64
+        transformer_dropout: 0.1
+        transformer_heads: 2
+        transformer_mlp_dim: 128
+        use_transformer: false
+selection_mask:
+    value:
+        latent_mask_dim: 64
+        loss_type: mse
+        mask_encoder_params:
+            cnn:
+                activation_fn_str: relu
+                base_filters: 16
+                dropout_rate: 0.1
+                fc_hidden_dim: null
+                image_size:
+                    - 10
+                    - 10
+                input_channels: 1
+                kernel_size: 3
+                num_conv_layers: 2
+                padding: 1
+                stride: 2
+            mlp:
+                activation_fn_str: relu
+                dropout_rate: 0.1
+                hidden_dim: 128
+                image_size:
+                    - 10
+                    - 10
+                input_channels: 1
+                num_hidden_layers: 2
+            vit:
+                depth: 2
+                dropout: 0.1
+                emb_dropout: 0.1
+                heads: 2
+                image_size:
+                    - 10
+                    - 10
+                input_channels: 1
+                mlp_dim: 64
+                patch_size: 2
+                pool: cls
+        mask_encoder_type: mlp
+        selection_mask_predictor_hidden_dim: 128
+        transformer_depth: 2
+        transformer_dim_head: 32
+        transformer_dropout: 0.1
+        transformer_heads: 2
+        transformer_mlp_dim: 64
+        use_transformer: false
+        use_vicreg: false
+        vicreg_cov_coeff: 1
+        vicreg_sim_coeff: 25
+        vicreg_std_coeff: 25
+selection_predictor_training:
+    value:
+        best_model_save_path: best_model_selection_predictor.pth
+        early_stopping_patience: 10
