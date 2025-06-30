@@ -39,6 +39,8 @@ class ReplayBufferDataset(Dataset):
             elif buffer_path.endswith('.pkl'):
                 with open(buffer_path, 'rb') as f:
                     self.buffer = pickle.load(f)
+            elif buffer_path.endswith('h5'):
+                self.buffer = self._load_hdf5_buffer(buffer_path)
             else:
                 raise ValueError(f"Unsupported buffer file format: {buffer_path}. Please use .hdf5 or .pkl")
         else:
