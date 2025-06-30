@@ -45,13 +45,13 @@ class StateEncoder(nn.Module):
                  encoder_params: dict = None):
         super().__init__()
         params = encoder_params or {}
-        self.depth = params.get("depth", 2)
-        self.heads = params.get("heads", 4)
+        self.depth = params.get("depth", 4)
+        self.heads = params.get("heads", 8)
         self.mlp_dim = params.get("mlp_dim", 512)
         self.emb_dim = params.get("transformer_dim", 64)
-        self.dropout = params.get("dropout", 0.3)
-        self.emb_dropout = params.get("emb_dropout", 0.3)
-        self.scaled_pos = params.get("scaled_position_embeddings", True)
+        self.dropout = params.get("dropout", 0.2)
+        self.emb_dropout = params.get("emb_dropout", 0.2)
+        self.scaled_pos = params.get("scaled_position_embeddings", False)
         self.vocab_size = params.get("colors_vocab_size", 11)
         self.padding_value = -1
 
@@ -121,11 +121,7 @@ class StateEncoder(nn.Module):
         Returns:
             (B, latent_dim) pooled CLS representation.
         """
-        print(f"StateEncoder: input shape {x.shape}, dtype {x.dtype}")
-        print(f"StateEncoder: shape_h {shape_h.shape}, shape_w {shape_w.shape}, shape_h dtype {shape_h.dtype}, shape_w dtype {shape_w.dtype}")
-        print(f"StateEncoder: most_common_color {most_common_color.shape}, dtype {most_common_color.dtype}")
-        print(f"StateEncoder: least_common_color {least_common_color.shape}, dtype {least_common_color.dtype}")
-        print(f"StateEncoder: num_unique_colors {num_unique_colors.shape}, dtype {num_unique_colors.dtype}")
+
         B, H, W = x.shape
 
         # 1) mask & shift tokens
