@@ -159,23 +159,31 @@ def train_color_predictor():
         for i, batch in enumerate(train_loader):
             state = batch['state'].to(device)  # (B, H, W) or (B, C, H, W)
             action_colour = batch['action_colour'].to(device)  # (B,)
+            print('state dtype:', state.dtype, 'action_colour dtype:', action_colour.dtype)
             target_colour = batch['colour'].to(device)  # (B,)
-            shape = batch['shape'].to(device)
+            print('target_colour dtype:', target_colour.dtype)
+            shape_w = batch['shape_w'].to(device)
+            print('shape_w dtype:', shape_w.dtype)
+            shape_h = batch['shape_h'].to(device)
+            print('shape_h dtype:', shape_h.dtype)
             num_colors_grid = batch['num_colors_grid'].to(device)
+            print('num_colors_grid dtype:', num_colors_grid.dtype)
             most_present_color = batch['most_present_color'].to(device)
+            print('most_present_color dtype:', most_present_color.dtype)
             least_present_color = batch['least_present_color'].to(device)
-
+            print('least_present_color dtype:', least_present_color.dtype)
 
             # State embedding
             if state.dim() == 3:
                 # (B, H, W) -> (B, 1, H, W) for single channel
-                state = state.unsqueeze(1)
+                state = state
             latent = state_encoder(
                 state.float(),
-                shape=shape,
-                num_colors_grid=num_colors_grid,
-                most_present_color=most_present_color,
-                least_present_color=least_present_color
+                shape_w=shape_w,
+                shape_h=shape_h,
+                num_unique_colors=num_colors_grid,
+                most_common_color=most_present_color,
+                least_common_color=least_present_color
             )  # (B, latent_dim)
 
             # Color selection one-hot

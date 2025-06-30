@@ -94,7 +94,7 @@ class ReplayBufferDataset(Dataset):
         transition = self.buffer[idx]
         
         # Extract state and convert to tensor
-        state = torch.tensor(transition['state'], dtype=torch.float32)
+        state = torch.tensor(transition['state'], dtype=torch.long)
         
         # Extract actions
         action_colour = torch.tensor(transition['action']['colour'], dtype=torch.long)

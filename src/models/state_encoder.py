@@ -37,7 +37,6 @@ class PreNormTransformerBlock(nn.Module):
         x = x + self.dropout2(mlp_out)
         return x
 
-
 class StateEncoder(nn.Module):
     def __init__(self,
                  image_size,            # int or tuple (H, W)
@@ -122,6 +121,11 @@ class StateEncoder(nn.Module):
         Returns:
             (B, latent_dim) pooled CLS representation.
         """
+        print(f"StateEncoder: input shape {x.shape}, dtype {x.dtype}")
+        print(f"StateEncoder: shape_h {shape_h.shape}, shape_w {shape_w.shape}, shape_h dtype {shape_h.dtype}, shape_w dtype {shape_w.dtype}")
+        print(f"StateEncoder: most_common_color {most_common_color.shape}, dtype {most_common_color.dtype}")
+        print(f"StateEncoder: least_common_color {least_common_color.shape}, dtype {least_common_color.dtype}")
+        print(f"StateEncoder: num_unique_colors {num_unique_colors.shape}, dtype {num_unique_colors.dtype}")
         B, H, W = x.shape
 
         # 1) mask & shift tokens
