@@ -3,6 +3,7 @@ import pickle
 import numpy as np
 from torch.utils.data import Dataset
 import os
+import h5py
 
 
 class ReplayBufferDataset(Dataset):
@@ -33,8 +34,13 @@ class ReplayBufferDataset(Dataset):
         # Load or generate buffer data
         if os.path.exists(buffer_path):
             print(f"Loading replay buffer from {buffer_path}")
-            with open(buffer_path, 'rb') as f:
-                self.buffer = pickle.load(f)
+            if buffer_path.endswith('.hdf5'):
+                self.buffer = self._load_hdf5_buffer(buffer_path)
+            elif buffer_path.endswith('.pkl'):
+                with open(buffer_path, 'rb') as f:
+                    self.buffer = pickle.load(f)
+            else:
+                raise ValueError(f"Unsupported buffer file format: {buffer_path}. Please use .hdf5 or .pkl")
         else:
             print(f"ERROR: Buffer file {buffer_path} not found. Please provide a valid replay buffer file.")
             raise FileNotFoundError(f"Buffer file {buffer_path} not found.")
@@ -91,6 +97,40 @@ class ReplayBufferDataset(Dataset):
         
         return buffer
     
+    def _load_hdf5_buffer(self, buffer_path):
+        """Load replay buffer data from an HDF5 file."""
+        buffer = []
+        with h5py.File(buffer_path, 'r') as f:
+            # Assuming all datasets have the same length
+            num_transitions = f['state'].shape[0]
+            
+            for i in range(num_transitions):
+                transition = {
+                    'state': f['state'][i],
+                    'action': {
+                        'colour': f['action_colour'][i],
+                        'selection': f['action_selection'][i],
+                        'transform': f['action_transform'][i]
+                    },
+                    'selection_mask': f['selection_mask'][i],
+                    'next_state': f['next_state'][i],
+                    'colour': f['colour'][i],
+                    'reward': f['reward'][i],
+                    'done': f['done'][i],
+                    'info': {},
+                    'shape': f['shape'][i],
+                    'num_colors_grid': f['num_colors_grid'][i],
+                    'most_present_color': f['most_present_color'][i],
+                    'least_present_color': f['least_present_color'][i]
+                }
+                
+                # Handle transition_type if it exists
+                if 'transition_type' in f['info']:
+                    transition['info']['transition_type'] = f['info/transition_type'][i]
+                
+                buffer.append(transition)
+        return buffer
+    
     def __len__(self):
         return len(self.buffer)
     
@@ -110,6 +150,12 @@ class ReplayBufferDataset(Dataset):
         colour = torch.tensor(transition['colour'], dtype=torch.long)
         selection_mask = torch.tensor(transition['selection_mask'], dtype=torch.float32)
         
+        # Extract grid statistics
+        shape = torch.tensor(transition['shape'], dtype=torch.long)
+        num_colors_grid = torch.tensor(transition['num_colors_grid'], dtype=torch.long)
+        most_present_color = torch.tensor(transition['most_present_color'], dtype=torch.long)
+        least_present_color = torch.tensor(transition['least_present_color'], dtype=torch.long)
+        
         # Prepare sample based on mode
         sample = {
             'state': state,
@@ -120,6 +166,10 @@ class ReplayBufferDataset(Dataset):
             'selection_mask': selection_mask,
             'reward': torch.tensor(transition['reward'], dtype=torch.float32),
             'done': torch.tensor(float(transition['done']), dtype=torch.float32),
+            'shape': shape,
+            'num_colors_grid': num_colors_grid,
+            'most_present_color': most_present_color,
+            'least_present_color': least_present_color,
         }
         
         # Add next_state for modes that need it

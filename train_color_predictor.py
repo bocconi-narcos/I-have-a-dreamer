@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split
 import yaml
 import pickle
 from src.models.state_encoder import StateEncoder
-from src.models.color_predictor import ColorPredictor, TransformerColorPredictor
+from src.models.predictors.color_predictor import ColorPredictor, TransformerColorPredictor
 from src.data import ReplayBufferDataset
 from torch.utils.data import Dataset
 from src.models.action_embed import ActionEmbedder
@@ -35,9 +35,20 @@ def evaluate(model, encoder, action_embedder, dataloader, device, criterion, num
             state = batch['state'].to(device)
             action_colour = batch['action_colour'].to(device)
             target_colour = batch['colour'].to(device)
+            shape = batch['shape'].to(device)
+            num_colors_grid = batch['num_colors_grid'].to(device)
+            most_present_color = batch['most_present_color'].to(device)
+            least_present_color = batch['least_present_color'].to(device)
+            
             if state.dim() == 3:
                 state = state.unsqueeze(1)
-            latent = encoder(state.float())
+            latent = encoder(
+                state.float(),
+                shape=shape,
+                num_colors_grid=num_colors_grid,
+                most_present_color=most_present_color,
+                least_present_color=least_present_color
+            )
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
             action_embedding = action_embedder(action_colour_onehot)
             logits = model(latent, action_embedding)
@@ -149,13 +160,23 @@ def train_color_predictor():
             state = batch['state'].to(device)  # (B, H, W) or (B, C, H, W)
             action_colour = batch['action_colour'].to(device)  # (B,)
             target_colour = batch['colour'].to(device)  # (B,)
+            shape = batch['shape'].to(device)
+            num_colors_grid = batch['num_colors_grid'].to(device)
+            most_present_color = batch['most_present_color'].to(device)
+            least_present_color = batch['least_present_color'].to(device)
 
 
             # State embedding
             if state.dim() == 3:
                 # (B, H, W) -> (B, 1, H, W) for single channel
                 state = state.unsqueeze(1)
-            latent = state_encoder(state.float())  # (B, latent_dim)
+            latent = state_encoder(
+                state.float(),
+                shape=shape,
+                num_colors_grid=num_colors_grid,
+                most_present_color=most_present_color,
+                least_present_color=least_present_color
+            )  # (B, latent_dim)
 
             # Color selection one-hot
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)  # (B, num_color_selection_fns)

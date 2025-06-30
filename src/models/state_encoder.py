@@ -101,12 +101,21 @@ class StateEncoder(nn.Module):
         num_params = sum(p.numel() for p in self.parameters())
         print(f"[StateEncoder] Number of parameters: {num_params}")
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self,
+                x: torch.Tensor,
+                shape: torch.Tensor,
+                num_colors_grid: torch.Tensor,
+                most_present_color: torch.Tensor,
+                least_present_color: torch.Tensor) -> torch.Tensor:
         """
         Forward pass for the categorical state encoder.
 
         Args:
             x (torch.Tensor): Input tensor of shape (B, 1, H, W) with pixel values in [-1, 9].
+            shape (torch.Tensor): Unpadded grid dimensions (B, 2) or (B, 1, 2) with (height, width).
+            num_colors_grid (torch.Tensor): Number of unique colors in each grid (B,).
+            most_present_color (torch.Tensor): Most common color in each grid (B,).
+            least_present_color (torch.Tensor): Least common color in each grid (B,).
 
         Returns:
             torch.Tensor: Latent representation of shape (B, latent_dim).
@@ -127,15 +136,20 @@ class StateEncoder(nn.Module):
         # Look up color embedding for each pixel: (B, H, W) -> (B, H, W, D)
         x_emb = self.color_embedding(pixel_indices)
 
-        # --- 2. Calculate Grid Statistics and Create Statistic Tokens ---
-        stats = self._calculate_grid_statistics(x)
+        # --- 2. Create Statistic Tokens from provided data ---
+        # Handle cases where stats might come in with an extra dimension from dataloader
+        if shape.dim() == 3:
+            shape = shape.squeeze(1)
+
+        unpadded_heights = shape[:, 0].long()
+        unpadded_widths = shape[:, 1].long()
         
         # Create embedding tokens for statistics
-        unique_count_tokens = self.unique_count_embedding(stats['unique_counts']).unsqueeze(1)  # (B, 1, D)
-        most_common_tokens = self.most_common_color_embedding(stats['most_common_colors']).unsqueeze(1)  # (B, 1, D)
-        least_common_tokens = self.least_common_color_embedding(stats['least_common_colors']).unsqueeze(1)  # (B, 1, D)
-        height_tokens = self.height_embedding(stats['unpadded_heights']).unsqueeze(1)  # (B, 1, D)
-        width_tokens = self.width_embedding(stats['unpadded_widths']).unsqueeze(1)  # (B, 1, D)
+        unique_count_tokens = self.unique_count_embedding(num_colors_grid.long()).unsqueeze(1)  # (B, 1, D)
+        most_common_tokens = self.most_common_color_embedding(most_present_color.long()).unsqueeze(1)  # (B, 1, D)
+        least_common_tokens = self.least_common_color_embedding(least_present_color.long()).unsqueeze(1)  # (B, 1, D)
+        height_tokens = self.height_embedding(unpadded_heights).unsqueeze(1)  # (B, 1, D)
+        width_tokens = self.width_embedding(unpadded_widths).unsqueeze(1)  # (B, 1, D)
         
         # Concatenate all statistic tokens
         stat_tokens = torch.cat([
@@ -208,6 +222,8 @@ class StateEncoder(nn.Module):
 
     def _calculate_grid_statistics(self, x: torch.Tensor):
         """
+        DEPRECATED: Grid statistics are now provided directly to the forward method.
+        
         Calculate grid statistics for each image in the batch.
         
         Args:
@@ -216,6 +232,7 @@ class StateEncoder(nn.Module):
         Returns:
             dict: Dictionary containing statistics for each batch item
         """
+        raise NotImplementedError("This method is deprecated. Pass statistics to forward().")
         b, _, h, w = x.shape
         pixel_values = x.squeeze(1)  # (B, H, W)
         
