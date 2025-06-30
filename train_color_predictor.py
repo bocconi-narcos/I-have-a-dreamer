@@ -35,19 +35,19 @@ def evaluate(model, encoder, action_embedder, dataloader, device, criterion, num
             state = batch['state'].to(device)
             action_colour = batch['action_colour'].to(device)
             target_colour = batch['colour'].to(device)
-            shape = batch['shape'].to(device)
+            shape_w = batch['shape_w'].to(device)
+            shape_h = batch['shape_h'].to(device)
             num_colors_grid = batch['num_colors_grid'].to(device)
             most_present_color = batch['most_present_color'].to(device)
             least_present_color = batch['least_present_color'].to(device)
             
-            if state.dim() == 3:
-                state = state.unsqueeze(1)
             latent = encoder(
-                state.float(),
-                shape=shape,
-                num_colors_grid=num_colors_grid,
-                most_present_color=most_present_color,
-                least_present_color=least_present_color
+                state,
+                shape_w=shape_w,
+                shape_h=shape_h,
+                num_unique_colors=num_colors_grid,
+                most_common_color=most_present_color,
+                least_common_color=least_present_color
             )
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
             action_embedding = action_embedder(action_colour_onehot)
@@ -130,8 +130,8 @@ def train_color_predictor():
     
     action_embedder = ActionEmbedder(num_actions=num_color_selection_fns, embed_dim=action_embedding_dim, dropout_p=0.1).to(device)
 
-    #color_predictor = ColorPredictor(latent_dim, num_colors=11, hidden_dim=color_predictor_hidden_dim, action_embedding_dim=action_embedding_dim).to(device)
-    color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
+    color_predictor = ColorPredictor(latent_dim, num_colors=11, hidden_dim=color_predictor_hidden_dim, action_embedding_dim=action_embedding_dim).to(device)
+    #color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(
@@ -159,26 +159,19 @@ def train_color_predictor():
         for i, batch in enumerate(train_loader):
             state = batch['state'].to(device)  # (B, H, W) or (B, C, H, W)
             action_colour = batch['action_colour'].to(device)  # (B,)
-            print('state dtype:', state.dtype, 'action_colour dtype:', action_colour.dtype)
             target_colour = batch['colour'].to(device)  # (B,)
-            print('target_colour dtype:', target_colour.dtype)
             shape_w = batch['shape_w'].to(device)
-            print('shape_w dtype:', shape_w.dtype)
             shape_h = batch['shape_h'].to(device)
-            print('shape_h dtype:', shape_h.dtype)
             num_colors_grid = batch['num_colors_grid'].to(device)
-            print('num_colors_grid dtype:', num_colors_grid.dtype)
             most_present_color = batch['most_present_color'].to(device)
-            print('most_present_color dtype:', most_present_color.dtype)
             least_present_color = batch['least_present_color'].to(device)
-            print('least_present_color dtype:', least_present_color.dtype)
 
             # State embedding
             if state.dim() == 3:
                 # (B, H, W) -> (B, 1, H, W) for single channel
                 state = state
             latent = state_encoder(
-                state.float(),
+                state,
                 shape_w=shape_w,
                 shape_h=shape_h,
                 num_unique_colors=num_colors_grid,
