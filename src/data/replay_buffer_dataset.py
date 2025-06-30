@@ -53,51 +53,7 @@ class ReplayBufferDataset(Dataset):
         
         print(f"Dataset initialized with {len(self.buffer)} samples in {mode} mode")
     
-    def _generate_dummy_data(self):
-        """Generate dummy replay buffer data for testing."""
-        num_samples = 1000
-        buffer = []
-        
-        for i in range(num_samples):
-            # Generate random state
-            if len(self.state_shape) == 3:
-                C, H, W = self.state_shape
-                state = np.random.randint(0, self.num_arc_colors, (H, W))
-            else:
-                H, W = self.state_shape
-                state = np.random.randint(0, self.num_arc_colors, (H, W))
-            
-            # Generate random actions
-            action = {
-                'colour': np.random.randint(0, self.num_color_selection_fns),
-                'selection': np.random.randint(0, self.num_selection_fns),
-                'transform': np.random.randint(0, self.num_transform_actions)
-            }
-            
-            # Generate random selection mask
-            selection_mask = np.random.randint(0, 2, state.shape)
-            
-            # Generate random next state
-            next_state = np.random.randint(0, self.num_arc_colors, state.shape)
-            
-            # Generate random color result
-            colour = np.random.randint(0, self.num_arc_colors)
-            
-            # Create transition
-            transition = {
-                'state': state,
-                'action': action,
-                'selection_mask': selection_mask,
-                'next_state': next_state,
-                'colour': colour,
-                'reward': np.random.random(),
-                'done': np.random.choice([True, False]),
-                'info': {}
-            }
-            
-            buffer.append(transition)
-        
-        return buffer
+
     
     def _load_hdf5_buffer(self, buffer_path):
         """Load replay buffer data from an HDF5 file."""
@@ -119,16 +75,13 @@ class ReplayBufferDataset(Dataset):
                     'colour': f['colour'][i],
                     'reward': f['reward'][i],
                     'done': f['done'][i],
-                    'info': {},
-                    'shape': f['shape'][i],
+                    'transition_type': f['transition_type'][i],
+                    'shape_h': f['shape_h'][i],
+                    'shape_w': f['shape_w'][i],
                     'num_colors_grid': f['num_colors_grid'][i],
                     'most_present_color': f['most_present_color'][i],
                     'least_present_color': f['least_present_color'][i]
                 }
-                
-                # Handle transition_type if it exists
-                if 'transition_type' in f['info']:
-                    transition['info']['transition_type'] = f['info/transition_type'][i]
                 
                 buffer.append(transition)
         return buffer
@@ -153,7 +106,8 @@ class ReplayBufferDataset(Dataset):
         selection_mask = torch.tensor(transition['selection_mask'], dtype=torch.float32)
         
         # Extract grid statistics
-        shape = torch.tensor(transition['shape'], dtype=torch.long)
+        shape_h = torch.tensor(transition['shape_h'], dtype=torch.long)
+        shape_w = torch.tensor(transition['shape_w'], dtype=torch.long)
         num_colors_grid = torch.tensor(transition['num_colors_grid'], dtype=torch.long)
         most_present_color = torch.tensor(transition['most_present_color'], dtype=torch.long)
         least_present_color = torch.tensor(transition['least_present_color'], dtype=torch.long)
@@ -168,7 +122,8 @@ class ReplayBufferDataset(Dataset):
             'selection_mask': selection_mask,
             'reward': torch.tensor(transition['reward'], dtype=torch.float32),
             'done': torch.tensor(float(transition['done']), dtype=torch.float32),
-            'shape': shape,
+            'shape_h': shape_h,
+            'shape_w': shape_w,
             'num_colors_grid': num_colors_grid,
             'most_present_color': most_present_color,
             'least_present_color': least_present_color,
@@ -180,7 +135,7 @@ class ReplayBufferDataset(Dataset):
             sample['next_state'] = next_state
         
         # Add transition_type if present
-        transition_type = transition.get('info', {}).get('transition_type', None)
+        transition_type = transition.get('transition_type', None)
         sample['transition_type'] = transition_type
         
         return sample 
