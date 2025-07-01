@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from src.models.state_encoder import StateEncoder
+from src.models.state_decoder import StateDecoder
 # from src.models.state_decoder import StateDecoder
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np

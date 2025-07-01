@@ -2,11 +2,20 @@
 # from src.models.base.vit import ViT
 # from torch.nn import TransformerDecoder, TransformerDecoderLayer
 
-# class StateDecoder(nn.Module):
-#     def __init__(self, latent_dim, n_attention_head, num_layers, **kwargs):
-#         super().__init__()
-#         decoder_layer = TransformerDecoderLayer(latent_dim, n_attention_head, **kwargs)
-#         self.decoder = TransformerDecoder(decoder_layer, num_layers)
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Optional, Tuple
+from torch.nn import TransformerDecoder, TransformerDecoderLayer
+
+class StateDecoder(nn.Module):
+    def __init__(self, latent_dim, n_attention_head, num_layers, **kwargs):
+        super().__init__()
+        decoder_layer = TransformerDecoderLayer(latent_dim, n_attention_head, **kwargs)
+        self.decoder = TransformerDecoder(decoder_layer, num_layers)
         
 
 #     def forward(self, tgt, tgt_mask=None):
@@ -29,14 +38,7 @@
 #         Done: adjustable MLP dimension in transformer layer
 #         causal mask and/or autoregressive progression to predict (understanding the differences between the two)
 
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, Tuple
-from torch.nn import TransformerDecoder, TransformerDecoderLayer
+
 
 
 # def set_device(file='file.py'):
