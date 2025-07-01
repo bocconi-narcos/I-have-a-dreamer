@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 from torch.nn import TransformerDecoder, TransformerDecoderLayer
+import h5py
 
 # class StateDecoder(nn.Module):
 #     def __init__(self, latent_dim, n_attention_head, num_layers, **kwargs):
@@ -247,3 +248,16 @@ class StateDecoder(nn.Module):
 #         latent_seq = latent_representation.unsqueeze(1).repeat(1, N, 1)
 
 #         return latent_seq
+
+# Path to your buffer file
+buffer_path = "data/buffer.h5"
+
+# Open the buffer and extract the state
+with h5py.File(buffer_path, "r") as f:
+    state_np = f["state"][:]  # Load the entire state dataset into a numpy array
+
+print("State shape:", state_np.shape)
+print("State dtype:", state_np.dtype)
+
+# Convert to torch tensor
+state_tensor = torch.from_numpy(state_np)
