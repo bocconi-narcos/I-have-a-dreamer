@@ -7,11 +7,11 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 from torch.nn import TransformerDecoder, TransformerDecoderLayer
 
-class StateDecoder(nn.Module):
-    def __init__(self, latent_dim, n_attention_head, num_layers, **kwargs):
-        super().__init__()
-        decoder_layer = TransformerDecoderLayer(latent_dim, n_attention_head, **kwargs)
-        self.decoder = TransformerDecoder(decoder_layer, num_layers)
+# class StateDecoder(nn.Module):
+#     def __init__(self, latent_dim, n_attention_head, num_layers, **kwargs):
+#         super().__init__()
+#         decoder_layer = TransformerDecoderLayer(latent_dim, n_attention_head, **kwargs)
+#         self.decoder = TransformerDecoder(decoder_layer, num_layers)
         
 
 #     def forward(self, tgt, tgt_mask=None):
@@ -47,7 +47,7 @@ class StateDecoder(nn.Module):
 # DEVICE = set_device('state_decoder.py')
 
 
-class DecoderTransformerTorch(nn.Module):
+class StateDecoder(nn.Module):
     '''
     State Decoder
     '''
@@ -111,7 +111,6 @@ class DecoderTransformerTorch(nn.Module):
         col_j = col_indices.unsqueeze(0)
         mask = (row_j > row_i) | ((row_j == row_i) & (col_j > col_i))
         return mask
-
 
 
 
