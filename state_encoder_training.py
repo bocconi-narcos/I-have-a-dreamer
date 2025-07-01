@@ -17,9 +17,7 @@ class Autoencoder(nn.Module):
         shape_row_logits, shape_col_logits, grid_logits = self.decoder(latent, H=x.shape[2], W=x.shape[3], dropout_eval=False)
         # grid_logits: (batch, N, vocab_size)
         # For reconstruction, you might want to take argmax or softmax over vocab_size
-        recon = grid_logits.argmax(dim=-1).float()  # (batch, N)
-        recon = recon.view(x.shape[0], x.shape[2], x.shape[3])  # (batch, H, W)
-        return recon
+        return grid_logits
 
 state = np.array([
     [ 7,  0,  7,  7,  8,  7, -1, -1, -1, -1],
@@ -76,7 +74,7 @@ for epoch in range(num_epochs):
         x = batch[0].to(device)
         output = autoencoder(x)
         output = output.squeeze(0)
-        loss = loss_fn(output, x)
+        loss = loss_fn(output, x.squeeze(1))  # Both are [batch, 10, 10]
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()

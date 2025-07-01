@@ -71,7 +71,7 @@ class StateDecoder(nn.Module):
         self.layer_norm = nn.LayerNorm(emb_dim)
         self.shape_row_proj = nn.Linear(emb_dim, max_rows)
         self.shape_col_proj = nn.Linear(emb_dim, max_cols)
-        self.grid_proj = nn.Linear(emb_dim, max_rows * max_cols * vocab_size)
+        self.grid_proj = nn.Linear(emb_dim, vocab_size)
 
     def forward(self, latent, H, W, dropout_eval: bool):
         # latent: (batch, latent_dim)
@@ -96,8 +96,7 @@ class StateDecoder(nn.Module):
         output = self.layer_norm(output)
         shape_row_logits = self.shape_row_proj(output)
         shape_col_logits = self.shape_col_proj(output)
-        grid_logits = self.grid_proj(output)
-        grid_logits = grid_logits.view(B, N, self.vocab_size)
+        grid_logits = self.grid_proj(output)  # (B, N, vocab_size)
         return shape_row_logits, shape_col_logits, grid_logits
 
     def _make_2d_causal_mask(self, device=None):
