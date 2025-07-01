@@ -1,7 +1,6 @@
 # import torch.nn as nn
 # from src.models.base.vit import ViT
-# from torch.nn import TransformerDecoder, TransformerDecoderLayer
-
+# from torch.nn import TransformerDecoder, TransformerDecoderLayer    
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
