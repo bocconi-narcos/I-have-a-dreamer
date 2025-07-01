@@ -7,12 +7,12 @@ buffer_path: "data/buffer.h5"  # Path to replay buffer file (use dummy data if n
 encoder_type: "vit"  # Options: "mlp", "cnn", "vit"
 latent_dim: 128
 encoder_params:
-  depth: 2
-  heads: 4
-  mlp_dim: 512
+  depth: 4
+  heads: 8
+  mlp_dim: 1024
   pool: "cls"
-  dropout: 0.3
-  emb_dropout: 0.3
+  dropout: 0.35
+  emb_dropout: 0.35
   input_channels: 1
   image_size: [10, 10]
 
@@ -29,7 +29,7 @@ num_transform_actions: 8  # Set this to the number of transform actions in DSL
 
 # Color Predictor Module
 color_predictor:
-  hidden_dim: 128 #NOTE: this should be the same as the state encoder hidden dim for attention
+  hidden_dim: 2048 #NOTE: this should be the same as the state encoder hidden dim for attention
 
 # Selection Mask Prediction Module
 selection_mask:
@@ -114,8 +114,8 @@ continuation_predictor:
 
 # Training (Shared across all modules)
 batch_size: 32
-num_epochs: 30
-learning_rate: 0.0003
+num_epochs: 200
+learning_rate: 0.003
 num_workers: 0
 log_interval: 10
 
