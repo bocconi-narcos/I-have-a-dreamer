@@ -6,6 +6,7 @@ from src.models.state_decoder import StateDecoder
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
 import torch.optim as optim
+import h5py
 
 class Autoencoder(nn.Module):
     def __init__(self, encoder_params, decoder_params):
@@ -18,32 +19,31 @@ class Autoencoder(nn.Module):
         shape_row_logits, shape_col_logits, grid_logits = self.decoder(latent, H=x.shape[2], W=x.shape[3], dropout_eval=False)
         return grid_logits  # (batch, N, vocab_size)
 
-state = np.array([
-    [ 7,  0,  7,  7,  8,  7, -1, -1, -1, -1],
-    [ 7,  7,  7,  7,  7,  7, -1, -1, -1, -1],
-    [ 7,  7,  7,  7,  7,  7, -1, -1, -1, -1],
-    [ 7,  7,  7,  7,  7,  7, -1, -1, -1, -1],
-    [ 7,  8,  7,  7,  0,  7, -1, -1, -1, -1],
-    [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-    [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-    [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-    [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-    [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
-], dtype=np.int8)
+buffer_path = "data/buffer.h5"
+with h5py.File(buffer_path, "r") as f:
+    state_np = f["state"][:]  # shape: (num_samples, H, W) or (num_samples, 1, H, W)
 
-# Convert to torch tensor and add batch and channel dimensions
-state_tensor = torch.from_numpy(state).unsqueeze(0).unsqueeze(0)  # shape: (1, 1, 10, 10)
+print("State shape:", state_np.shape)
+state_tensor = torch.from_numpy(state_np)
 
 # If state_tensor is [num_samples, H, W], add a channel dimension
 if state_tensor.ndim == 3:
-    state_tensor = state_tensor.unsqueeze(1)  # [10000, 1, 10, 10]
-
+    state_tensor = state_tensor.unsqueeze(1)  # [num_samples, 1, H, W]
 num_samples = state_tensor.shape[0]
+
 train_size = int(0.8 * num_samples)
 val_size = num_samples - train_size
-assert train_size > 0 and val_size > 0, f"train_size={train_size}, val_size={val_size}"
 
-# Create dataset and split
+# Ensure both splits are at least 1
+if train_size == 0:
+    train_size = 1
+    val_size = num_samples - 1
+if val_size == 0:
+    val_size = 1
+    train_size = num_samples - 1
+
+print(f"Splitting: train_size={train_size}, val_size={val_size}, total={num_samples}")
+
 dataset = TensorDataset(state_tensor)
 train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
@@ -75,15 +75,17 @@ autoencoder = autoencoder.to(device)
 optimizer = optim.AdamW(autoencoder.parameters(), lr=1e-3)
 loss_fn = nn.CrossEntropyLoss()
 
-num_epochs = 10
+num_epochs = 30
+best_val_loss = float('inf')
+best_encoder_weights = None
 
 for epoch in range(num_epochs):
     autoencoder.train()
     total_loss = 0
     for batch in train_loader:
         x = batch[0].to(device)
-        output = autoencoder(x)  # (batch, N, vocab_size)
-        target = x.squeeze(1).long().view(x.shape[0], -1)  # (batch, N)
+        output = autoencoder(x)
+        target = x.squeeze(1).long().view(x.shape[0], -1)
         loss = loss_fn(output.permute(0, 2, 1), target)
         optimizer.zero_grad()
         loss.backward()
@@ -105,8 +107,16 @@ for epoch in range(num_epochs):
 
     print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
 
-torch.save(autoencoder.encoder.state_dict(), "encoder_weights.pth")
-print("Encoder weights saved to encoder_weights.pth")
+    # Save best encoder weights based on lowest avg val loss
+    if avg_val_loss < best_val_loss:
+        best_val_loss = avg_val_loss
+        best_encoder_weights = autoencoder.encoder.state_dict()
+        print(f"New best model found at epoch {epoch+1} with avg val loss {best_val_loss:.4f}")
+
+# After training, save the best encoder weights
+if best_encoder_weights is not None:
+    torch.save(best_encoder_weights, "encoder_weights_best.pth")
+    print(f"Best encoder weights saved to encoder_weights_best.pth with val loss {best_val_loss:.4f}")
 
 autoencoder.eval()  # Set to eval mode if not training
 with torch.no_grad():
