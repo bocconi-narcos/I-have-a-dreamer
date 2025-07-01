@@ -13,11 +13,13 @@ class Autoencoder(nn.Module):
         self.decoder = StateDecoder(**decoder_params)
 
     def forward(self, x, tgt_mask=None):
-        # Encode input to latent
         latent = self.encoder(x)
-        latent = latent.unsqueeze(0)  # (1, batch, latent_dim)
-        output = self.decoder(latent, tgt_mask=tgt_mask)
-        return output
+        shape_row_logits, shape_col_logits, grid_logits = self.decoder(latent, H=x.shape[2], W=x.shape[3], dropout_eval=False)
+        # grid_logits: (batch, N, vocab_size)
+        # For reconstruction, you might want to take argmax or softmax over vocab_size
+        recon = grid_logits.argmax(dim=-1).float()  # (batch, N)
+        recon = recon.view(x.shape[0], x.shape[2], x.shape[3])  # (batch, H, W)
+        return recon
 
 state = np.array([
     [ 7,  0,  7,  7,  8,  7, -1, -1, -1, -1],
@@ -49,9 +51,13 @@ encoder_params = {
     'encoder_params': {'depth': 4, 'heads': 4, 'mlp_dim': 256},               
 }
 decoder_params = {
-    'latent_dim': 128,
-    'n_attention_head': 4,
-    'num_layers': 4
+    'emb_state_dim': 128,   # latent_dim from encoder
+    'emb_dim': 128,         # transformer embedding dimension
+    'num_layers': 4,
+    'max_rows': 10,
+    'max_cols': 10,
+    'vocab_size': 11,       # number of color categories
+    'mlp_dim': 256
 }
 
 autoencoder = Autoencoder(encoder_params, decoder_params)
