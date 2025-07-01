@@ -148,7 +148,7 @@ def train_color_predictor():
 
     best_val_loss = float('inf')
     epochs_no_improve = 0
-    patience = 10
+    patience = 50
     save_path = 'best_model_color_predictor.pth'
     wandb.init(project="color_predictor", config=config)
     for epoch in range(num_epochs):
@@ -189,6 +189,15 @@ def train_color_predictor():
             loss = criterion(logits, target_colour)
             optimizer.zero_grad()
             loss.backward()
+            
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(
+                list(state_encoder.parameters()) + 
+                list(action_embedder.parameters()) + 
+                list(color_predictor.parameters()), 
+                max_norm=1.0
+            )
+            
             optimizer.step()
 
             # Log gradients to wandb

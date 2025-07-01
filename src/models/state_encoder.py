@@ -103,6 +103,10 @@ class StateEncoder(nn.Module):
         # final projection
         self.to_latent = nn.Linear(self.emb_dim, latent_dim) \
             if self.emb_dim != latent_dim else nn.Identity()
+        
+        # print model statistics
+        num_params = sum(p.numel() for p in self.parameters())
+        print(f"[StateEncoder] Number of parameters: {num_params}")
 
     def forward(self,
                 x: torch.LongTensor,
