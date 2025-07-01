@@ -16,7 +16,6 @@ class Autoencoder(nn.Module):
         latent = self.encoder(x)
         shape_row_logits, shape_col_logits, grid_logits = self.decoder(latent, H=x.shape[2], W=x.shape[3], dropout_eval=False)
         # grid_logits: (batch, N, vocab_size)
-        # For reconstruction, you might want to take argmax or softmax over vocab_size
         return grid_logits
 
 state = np.array([
@@ -63,9 +62,11 @@ device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 autoencoder = autoencoder.to(device)
 
 optimizer = torch.optim.AdamW(autoencoder.parameters(), lr=1e-3)
-loss_fn = nn.MSELoss()  # Use a suitable loss for your data
+loss_fn = nn.CrossEntropyLoss()
 
-num_epochs = 10
+num_epochs = 20
+best_loss = float('inf')
+best_encoder_weights = None
 
 for epoch in range(num_epochs):
     autoencoder.train()
@@ -73,19 +74,27 @@ for epoch in range(num_epochs):
     for batch in dataloader:
         x = batch[0].to(device)
         output = autoencoder(x)
-        output = output.squeeze(0)
-        loss = loss_fn(output, x.squeeze(1))  # Both are [batch, 10, 10]
+        target = x.squeeze(1).long().view(x.shape[0], -1)  # (batch, N)
+        loss = loss_fn(output.permute(0, 2, 1), target)  # CrossEntropyLoss expects (batch, vocab, N)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss/len(dataloader):.4f}")
+    avg_loss = total_loss / len(dataloader)
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
 
-torch.save(autoencoder.encoder.state_dict(), "encoder_weights.pth")
-print("Encoder weights saved to encoder_weights.pth")
+    if avg_loss < best_loss:
+        best_loss = avg_loss
+        best_encoder_weights = autoencoder.encoder.state_dict()
+        print(f"New best model found at epoch {epoch+1} with loss {best_loss:.4f}")
+
+if best_encoder_weights is not None:
+    torch.save(best_encoder_weights, "encoder_weights_best.pth")
+    print(f"Best encoder weights saved to encoder_weights_best.pth with loss {best_loss:.4f}")
 
 autoencoder.eval()  # Set to eval mode if not training
 with torch.no_grad():
+    state_tensor = state_tensor.to(device)
     output = autoencoder(state_tensor.float())  # If your model expects float, cast as needed
 
 
