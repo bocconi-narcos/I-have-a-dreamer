@@ -134,7 +134,7 @@ def train_color_predictor():
     #color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(
+    optimizer = optim.Adam(
         list(state_encoder.parameters()) + 
         list(action_embedder.parameters()) + 
         list(color_predictor.parameters()), 
