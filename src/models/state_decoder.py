@@ -1,6 +1,3 @@
-# import torch.nn as nn
-# from src.models.base.vit import ViT
-# from torch.nn import TransformerDecoder, TransformerDecoderLayer    
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -18,7 +15,6 @@ class StateDecoder(nn.Module):
         
 
 #     def forward(self, tgt, tgt_mask=None):
-        
 #         return self.decoder(tgt, tgt_mask=tgt_mask)
 
 
@@ -30,14 +26,11 @@ class StateDecoder(nn.Module):
 #         Decoding:
 #         sum embedded_row and embedded_column, create an embedded vector in R^d_T, stack all 81 vertically, then based on the latent vector and each positional embedding (embedded row and column) predict color of specific pixel referring to that positional embedding vector.
         
-        
 #         Adjustments
 #         Done: latent_dim can be different from transformer dim
 #         Done: adjustable depth of decoder_layer
 #         Done: adjustable MLP dimension in transformer layer
 #         causal mask and/or autoregressive progression to predict (understanding the differences between the two)
-
-
 
 
 # def set_device(file='file.py'):
