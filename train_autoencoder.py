@@ -188,11 +188,11 @@ def train_autoencoder():
             total_loss += loss.item() * state.size(0)
 
             if (i + 1) % log_interval == 0:
-                print(f"Epoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}")
+                print(f"\rEpoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}", end='', flush=True)
 
         avg_loss = total_loss / len(train_loader.dataset)
         val_loss, val_loss_dict = evaluate(state_encoder, state_decoder, val_loader, device)
-        print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f}")
+        print(f"\rEpoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f}", end='', flush=True)
         wandb.log({
             "train_loss": avg_loss,
             "val_loss": val_loss,
@@ -208,7 +208,7 @@ def train_autoencoder():
                 'state_encoder': state_encoder.state_dict(),
                 'state_decoder': state_decoder.state_dict(),
             }, save_path)
-            print(f"New best model saved to {save_path}")
+            print(f"\nNew best model saved to {save_path}")
         else:
             epochs_no_improve += 1
             print(f"No improvement for {epochs_no_improve} epoch(s)")
