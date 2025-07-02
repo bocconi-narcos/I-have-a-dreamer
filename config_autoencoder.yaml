@@ -12,19 +12,19 @@ num_transform_actions: 10
 encoder_params:
   image_size: [10, 10]
   input_channels: 1
-  depth: 4
-  heads: 16
+  depth: 2
+  heads: 8
   mlp_dim: 512
-  transformer_dim: 128
+  transformer_dim: 64
   dropout: 0.2
   emb_dropout: 0.2
   scaled_position_embeddings: false
   colors_vocab_size: 11
 
 decoder_params:
-  depth: 4
-  heads: 16
+  depth: 2
+  heads: 8
   mlp_dim: 512
-  transformer_dim: 128
+  transformer_dim: 64
   dropout: 0.2
   colors_vocab_size: 11
