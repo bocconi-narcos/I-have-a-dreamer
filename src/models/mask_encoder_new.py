@@ -100,3 +100,4 @@ class MaskEncoder(nn.Module):
         # Pooling (mean over sequence)
         latent = x_seq.mean(dim=1)  # (B, emb_dim)
         return latent 
+    
