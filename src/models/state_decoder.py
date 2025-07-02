@@ -136,15 +136,15 @@ class StateDecoder(nn.Module):
             seq = layer(seq)
 
         # Separate metadata and grid tokens
-        metadata_tokens = seq[:, 1:6]
-        grid_tokens = seq[:, 6:]
+        metadata_tokens = seq[:, 1:6] #row, col, most_common, least_common, unique_count
+        grid_tokens = seq[:, 6:] #grid
 
         # Project to output logits for metadata
-        shape_h_logits = self.to_shape_h(metadata_tokens[:, 0])
-        shape_w_logits = self.to_shape_w(metadata_tokens[:, 1])
-        most_common_logits = self.to_most_common(metadata_tokens[:, 2])
-        least_common_logits = self.to_least_common(metadata_tokens[:, 3])
-        unique_count_logits = self.to_unique_count(metadata_tokens[:, 4])
+        shape_h_logits = self.to_shape_h(metadata_tokens[:, 0]) #row
+        shape_w_logits = self.to_shape_w(metadata_tokens[:, 1]) #col
+        most_common_logits = self.to_most_common(metadata_tokens[:, 2]) #most_common
+        least_common_logits = self.to_least_common(metadata_tokens[:, 3]) #least_common
+        unique_count_logits = self.to_unique_count(metadata_tokens[:, 4]) #unique_count
 
         # Project to output logits for the grid
         grid_logits = self.to_grid(grid_tokens)
