@@ -1,9 +1,9 @@
 buffer_path: data/buffer.h5
 latent_dim: 128
 batch_size: 32
-num_epochs: 100
+num_epochs: 500
 learning_rate: 0.0004
-num_workers: 4
+num_workers: 0
 log_interval: 10
 num_color_selection_fns: 4
 num_selection_fns: 17
