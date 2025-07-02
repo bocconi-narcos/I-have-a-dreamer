@@ -23,15 +23,12 @@ class PreNormTransformerBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x, src_key_padding_mask=None):
-        # Pre-norm self-attention
         x_norm = self.norm1(x)
         attn_out, _ = self.attn(
             x_norm, x_norm, x_norm,
             key_padding_mask=src_key_padding_mask
         )
         x = x + self.dropout1(attn_out)
-
-        # Pre-norm feed-forward
         x_norm = self.norm2(x)
         mlp_out = self.mlp(x_norm)
         x = x + self.dropout2(mlp_out)
@@ -47,7 +44,8 @@ class MaskEncoder(nn.Module):
                  heads: int = 8,
                  mlp_dim: int = 512,
                  dropout: float = 0.2,
-                 emb_dropout: float = 0.2):
+                 emb_dropout: float = 0.2,
+                 padding_value: int = -1):
         super().__init__()
         if isinstance(image_size, int):
             H = W = image_size
@@ -56,6 +54,7 @@ class MaskEncoder(nn.Module):
         self.H = H
         self.W = W
         self.emb_dim = emb_dim
+        self.padding_value = padding_value
 
         self.embedding = nn.Embedding(vocab_size, emb_dim, padding_idx=0)
         self.pos_row_embed = nn.Embedding(H, emb_dim)
@@ -75,13 +74,15 @@ class MaskEncoder(nn.Module):
     def forward(self, x):
         """
         x: (B, H, W) or (B, 1, H, W)
+        Returns: (B, emb_dim) latent vector
         """
         if x.ndim == 4:
             x = x.squeeze(1)  # (B, H, W)
         B, H, W = x.shape
 
         # Embedding
-        x_emb = self.embedding(x)  # (B, H, W, emb_dim)
+        x_tok = (x + 1).clamp(min=0)  # shift -1 to 0 for padding
+        x_emb = self.embedding(x_tok)  # (B, H, W, emb_dim)
 
         # Positional Embedding
         pos_row = self.pos_row_embed(torch.arange(H, device=x.device))
@@ -93,11 +94,17 @@ class MaskEncoder(nn.Module):
         x_seq = x_emb.view(B, H*W, -1)  # (B, N, emb_dim)
         x_seq = self.emb_drop(x_seq)
 
+        # Padding mask: True for positions to mask (i.e., where x == -1)
+        pad_mask = (x.view(B, H*W) == self.padding_value)  # (B, N)
+
         # Transformer Encoder
         for layer in self.layers:
-            x_seq = layer(x_seq)
+            x_seq = layer(x_seq, src_key_padding_mask=pad_mask)
 
-        # Pooling (mean over sequence)
-        latent = x_seq.mean(dim=1)  # (B, emb_dim)
-        return latent 
+        # Pooling (mean over unmasked positions)
+        valid_mask = (~pad_mask).float()  # (B, N)
+        sum_latent = (x_seq * valid_mask.unsqueeze(-1)).sum(dim=1)  # (B, emb_dim)
+        count_latent = valid_mask.sum(dim=1).clamp(min=1).unsqueeze(-1)  # (B, 1)
+        latent = sum_latent / count_latent  # (B, emb_dim)
+        return latent
     
