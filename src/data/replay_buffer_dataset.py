@@ -40,7 +40,11 @@ class ReplayBufferDataset(Dataset):
                 with open(buffer_path, 'rb') as f:
                     self.buffer = pickle.load(f)
             elif buffer_path.endswith('h5'):
+                import time
+                start_time = time.time()
                 self.buffer = self._load_hdf5_buffer(buffer_path)
+                end_time = time.time()
+                print(f"Loaded {len(self.buffer)} transitions in {end_time - start_time:.2f} seconds")
             else:
                 raise ValueError(f"Unsupported buffer file format: {buffer_path}. Please use .hdf5 or .pkl")
         else:
