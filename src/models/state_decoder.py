@@ -3,6 +3,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class PreNormTransformerBlock(nn.Module):
+    """
+    A pre-normalization transformer block.
+
+    Args:
+        emb_dim (int): The embedding dimension.
+        heads (int): The number of attention heads.
+        mlp_dim (int): The dimension of the MLP layer.
+        dropout (float): The dropout rate.
+    """
     def __init__(self, emb_dim, heads, mlp_dim, dropout):
         super().__init__()
         self.norm1 = nn.LayerNorm(emb_dim)
@@ -23,6 +32,16 @@ class PreNormTransformerBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x, src_key_padding_mask=None):
+        """
+        Forward pass for the PreNormTransformerBlock.
+
+        Args:
+            x (torch.Tensor): The input tensor.
+            src_key_padding_mask (torch.Tensor, optional): The source key padding mask. Defaults to None.
+
+        Returns:
+            torch.Tensor: The output tensor.
+        """
         # Pre-norm self-attention
         x_norm = self.norm1(x)
         attn_out, _ = self.attn(
@@ -38,6 +57,15 @@ class PreNormTransformerBlock(nn.Module):
         return x
 
 class StateDecoder(nn.Module):
+    """
+    The StateDecoder model is a transformer-based decoder that reconstructs the state 
+    (grid and metadata) from a latent vector.
+
+    Args:
+        image_size (int or tuple): The size of the input image (height, width).
+        latent_dim (int): The dimension of the latent vector.
+        decoder_params (dict, optional): A dictionary of parameters for the decoder. Defaults to {}.
+    """
     def __init__(self,
                  image_size,
                  latent_dim: int,
@@ -59,9 +87,12 @@ class StateDecoder(nn.Module):
         self.max_cols = W
         self.max_sequence_length = 1 + 5 + H * W  # CLS + metadata + grid
 
+        # Project the latent vector to the transformer's embedding dimension
         self.latent_to_seq = nn.Linear(latent_dim, self.emb_dim)
+        # Positional embeddings for the sequence
         self.position_embed = nn.Parameter(torch.randn(1, self.max_sequence_length, self.emb_dim))
 
+        # Transformer blocks
         self.layers = nn.ModuleList([
             PreNormTransformerBlock(
                 emb_dim=self.emb_dim,
@@ -72,6 +103,7 @@ class StateDecoder(nn.Module):
             for _ in range(self.depth)
         ])
 
+        # Output heads for predicting grid and metadata
         self.to_grid = nn.Linear(self.emb_dim, self.vocab_size)
         self.to_shape_h = nn.Linear(self.emb_dim, self.max_rows)
         self.to_shape_w = nn.Linear(self.emb_dim, self.max_cols)
@@ -83,23 +115,38 @@ class StateDecoder(nn.Module):
         print(f"[StateDecoder] Number of parameters: {num_params}")
 
     def forward(self, z: torch.Tensor):
+        """
+        Forward pass for the StateDecoder.
+
+        Args:
+            z (torch.Tensor): The latent vector of shape (B, latent_dim).
+
+        Returns:
+            dict: A dictionary containing the logits for the grid and metadata.
+        """
         B = z.shape[0]
+        # Expand the latent vector to the sequence length
         latent_expanded = self.latent_to_seq(z)
         seq = latent_expanded.unsqueeze(1).expand(-1, self.max_sequence_length, -1)
+        # Add positional embeddings
         seq = seq + self.position_embed
 
+        # Pass through transformer layers
         for layer in self.layers:
             seq = layer(seq)
 
+        # Separate metadata and grid tokens
         metadata_tokens = seq[:, 1:6]
         grid_tokens = seq[:, 6:]
 
+        # Project to output logits for metadata
         shape_h_logits = self.to_shape_h(metadata_tokens[:, 0])
         shape_w_logits = self.to_shape_w(metadata_tokens[:, 1])
         most_common_logits = self.to_most_common(metadata_tokens[:, 2])
         least_common_logits = self.to_least_common(metadata_tokens[:, 3])
         unique_count_logits = self.to_unique_count(metadata_tokens[:, 4])
 
+        # Project to output logits for the grid
         grid_logits = self.to_grid(grid_tokens)
         grid_logits = grid_logits.view(B, self.max_rows, self.max_cols, -1)
 
