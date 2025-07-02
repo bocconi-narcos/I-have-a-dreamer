@@ -211,9 +211,9 @@ def train_autoencoder():
             print(f"\nNew best model saved to {save_path}")
         else:
             epochs_no_improve += 1
-            print(f"No improvement for {epochs_no_improve} epoch(s)")
+            print(f"\nNo improvement for {epochs_no_improve} epoch(s)")
         if epochs_no_improve >= patience:
-            print(f"Early stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
+            print(f"\nEarly stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
             break
 
     wandb.finish()
