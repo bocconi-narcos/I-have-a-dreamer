@@ -23,16 +23,20 @@ class PreNormTransformerBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x, src_key_padding_mask=None):
+        # Pre-norm self-attention
         x_norm = self.norm1(x)
         attn_out, _ = self.attn(
             x_norm, x_norm, x_norm,
             key_padding_mask=src_key_padding_mask
         )
         x = x + self.dropout1(attn_out)
+
+        # Pre-norm feed-forward
         x_norm = self.norm2(x)
         mlp_out = self.mlp(x_norm)
         x = x + self.dropout2(mlp_out)
         return x
+
 
 class MaskEncoder(nn.Module):
     def __init__(self,
