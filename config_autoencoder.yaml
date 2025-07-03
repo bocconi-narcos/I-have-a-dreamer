@@ -1,7 +1,7 @@
-buffer_path: data/buffer.h5
-latent_dim: 128
-batch_size: 32
-num_epochs: 500
+buffer_path: data/buffer_50.h5
+latent_dim: 32
+batch_size: 64
+num_epochs: 150
 learning_rate: 0.0004
 num_workers: 0
 log_interval: 10
@@ -12,19 +12,19 @@ num_transform_actions: 10
 encoder_params:
   image_size: [10, 10]
   input_channels: 1
-  depth: 2
-  heads: 8
+  depth: 5
+  heads: 16
   mlp_dim: 512
-  transformer_dim: 64
+  transformer_dim: 128
   dropout: 0.2
   emb_dropout: 0.2
   scaled_position_embeddings: false
-  colors_vocab_size: 11
+  colors_vocab_size: 12
 
 decoder_params:
-  depth: 2
-  heads: 8
+  depth: 5
+  heads: 16
   mlp_dim: 512
-  transformer_dim: 64
+  transformer_dim: 128
   dropout: 0.2
-  colors_vocab_size: 11
+  colors_vocab_size: 12
