@@ -104,6 +104,9 @@ class StateEncoder(nn.Module):
         self.to_latent = nn.Linear(self.emb_dim, latent_dim) \
             if self.emb_dim != latent_dim else nn.Identity()
         
+        # final normalization for CLS token
+        self.final_norm = nn.LayerNorm(self.emb_dim)
+        
         # print model statistics
         num_params = sum(p.numel() for p in self.parameters())
         print(f"[StateEncoder] Number of parameters: {num_params}")
@@ -174,4 +177,5 @@ class StateEncoder(nn.Module):
 
         # 7) pool CLS
         cls_out = out[:, 0, :]                                          # (B, emb_dim)
+        cls_out = self.final_norm(cls_out)                              # Apply final LayerNorm
         return self.to_latent(cls_out)                                  # (B, latent_dim)
