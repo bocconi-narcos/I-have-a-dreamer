@@ -5,11 +5,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 import yaml
 from src.models.state_encoder import StateEncoder
-from models.predictors.color_predictor import ColorPredictor
+from src.models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder import MaskEncoder
-from models.predictors.selection_mask_predictor import SelectionMaskPredictor
+from src.models.predictors.selection_mask_predictor import SelectionMaskPredictor
 from src.losses.vicreg import VICRegLoss
 from src.data import ReplayBufferDataset
+from src.models.base.transformer_blocks import Transformer
 
 # --- Config Loader ---
 def load_config(config_path="config.yaml"):
