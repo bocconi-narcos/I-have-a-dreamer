@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split
 import yaml
 from src.models.state_encoder import StateEncoder
 from src.models.predictors.color_predictor import ColorPredictor
-from src.models.mask_encoder import MaskEncoder
+from src.models.mask_encoder_new import MaskEncoder
 from src.models.predictors.selection_mask_predictor import SelectionMaskPredictor
 from src.losses.vicreg import VICRegLoss
 from src.data import ReplayBufferDataset
@@ -90,7 +90,7 @@ def train_selection_predictor():
     buffer_path = config['buffer_path']
     encoder_type = config['encoder_type']
     latent_dim = config['latent_dim']
-    encoder_params = config['encoder_params'][encoder_type]
+    encoder_params = config['encoder_params']
     num_color_selection_fns = config['num_color_selection_fns']
     num_selection_fns = config['num_selection_fns']
     num_transform_actions = config['num_transform_actions']
@@ -142,9 +142,14 @@ def train_selection_predictor():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    state_encoder = StateEncoder(encoder_type, latent_dim=latent_dim, **encoder_params).to(device)
+    state_encoder = StateEncoder(
+        image_size=image_size,
+        input_channels=input_channels,
+        latent_dim=latent_dim,
+        encoder_params=encoder_params
+    ).to(device)
     color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
-    mask_encoder = MaskEncoder(mask_encoder_type, latent_dim=latent_mask_dim, **mask_encoder_params).to(device)
+    mask_encoder = MaskEncoder(mask_encoder_type, **mask_encoder_params).to(device)
     
     # Updated SelectionMaskPredictor initialization
     selection_mask_predictor = SelectionMaskPredictor(
