@@ -1,6 +1,5 @@
 import torch
 import pickle
-import numpy as np
 from torch.utils.data import Dataset
 import os
 import h5py
@@ -39,6 +38,44 @@ class ReplayBufferDataset(Dataset):
             elif buffer_path.endswith('.pkl'):
                 with open(buffer_path, 'rb') as f:
                     self.buffer = pickle.load(f)
+            elif buffer_path.endswith('.pt'):
+                import time
+                start_time = time.time()
+                buffer_dict = torch.load(buffer_path, map_location='cpu')
+                
+                # Convert dictionary format to list of transitions
+                if isinstance(buffer_dict, dict) and 'state' in buffer_dict:
+                    # This is a dictionary format with arrays for each field
+                    num_transitions = len(buffer_dict['state'])
+                    self.buffer = []
+                    
+                    for i in range(num_transitions):
+                        transition = {
+                            'state': buffer_dict['state'][i],
+                            'action': {
+                                'colour': buffer_dict['action_colour'][i],
+                                'selection': buffer_dict['action_selection'][i],
+                                'transform': buffer_dict['action_transform'][i]
+                            },
+                            'selection_mask': buffer_dict['selection_mask'][i],
+                            'next_state': buffer_dict['next_state'][i],
+                            'colour': buffer_dict['colour'][i],
+                            'reward': buffer_dict['reward'][i],
+                            'done': buffer_dict['done'][i],
+                            'transition_type': buffer_dict['transition_type'][i],
+                            'shape_h': buffer_dict['shape_h'][i],
+                            'shape_w': buffer_dict['shape_w'][i],
+                            'num_colors_grid': buffer_dict['num_colors_grid'][i],
+                            'most_present_color': buffer_dict['most_present_color'][i],
+                            'least_present_color': buffer_dict['least_present_color'][i]
+                        }
+                        self.buffer.append(transition)
+                else:
+                    # This is already in list format
+                    self.buffer = buffer_dict
+                
+                end_time = time.time()
+                print(f"Loaded {len(self.buffer)} transitions in {end_time - start_time:.2f} seconds")
             elif buffer_path.endswith('h5'):
                 import time
                 start_time = time.time()
@@ -46,7 +83,7 @@ class ReplayBufferDataset(Dataset):
                 end_time = time.time()
                 print(f"Loaded {len(self.buffer)} transitions in {end_time - start_time:.2f} seconds")
             else:
-                raise ValueError(f"Unsupported buffer file format: {buffer_path}. Please use .hdf5 or .pkl")
+                raise ValueError(f"Unsupported buffer file format: {buffer_path}. Please use .hdf5, .pkl, or .pt")
         else:
             print(f"ERROR: Buffer file {buffer_path} not found. Please provide a valid replay buffer file.")
             raise FileNotFoundError(f"Buffer file {buffer_path} not found.")
@@ -93,28 +130,35 @@ class ReplayBufferDataset(Dataset):
     def __len__(self):
         return len(self.buffer)
     
+    def _to_tensor(self, data, dtype):
+        """Convert data to tensor, handling both tensor and non-tensor inputs."""
+        if torch.is_tensor(data):
+            return data.clone().detach().to(dtype)
+        else:
+            return torch.tensor(data, dtype=dtype)
+    
     def __getitem__(self, idx):
         """Get a single sample from the dataset."""
         transition = self.buffer[idx]
         
         # Extract state and convert to tensor
-        state = torch.tensor(transition['state'], dtype=torch.long)
+        state = self._to_tensor(transition['state'], torch.long)
         
         # Extract actions
-        action_colour = torch.tensor(transition['action']['colour'], dtype=torch.long)
-        action_selection = torch.tensor(transition['action']['selection'], dtype=torch.long)
-        action_transform = torch.tensor(transition['action']['transform'], dtype=torch.long)
+        action_colour = self._to_tensor(transition['action']['colour'], torch.long)
+        action_selection = self._to_tensor(transition['action']['selection'], torch.long)
+        action_transform = self._to_tensor(transition['action']['transform'], torch.long)
         
         # Extract targets
-        colour = torch.tensor(transition['colour'], dtype=torch.long)
-        selection_mask = torch.tensor(transition['selection_mask'], dtype=torch.float32)
+        colour = self._to_tensor(transition['colour'], torch.long)
+        selection_mask = self._to_tensor(transition['selection_mask'], torch.float32)
         
         # Extract grid statistics
-        shape_h = torch.tensor(transition['shape_h'], dtype=torch.long)
-        shape_w = torch.tensor(transition['shape_w'], dtype=torch.long)
-        num_colors_grid = torch.tensor(transition['num_colors_grid'], dtype=torch.long)
-        most_present_color = torch.tensor(transition['most_present_color'], dtype=torch.long)
-        least_present_color = torch.tensor(transition['least_present_color'], dtype=torch.long)
+        shape_h = self._to_tensor(transition['shape_h'], torch.long)
+        shape_w = self._to_tensor(transition['shape_w'], torch.long)
+        num_colors_grid = self._to_tensor(transition['num_colors_grid'], torch.long)
+        most_present_color = self._to_tensor(transition['most_present_color'], torch.long)
+        least_present_color = self._to_tensor(transition['least_present_color'], torch.long)
         
         # Prepare sample based on mode
         sample = {
@@ -124,8 +168,8 @@ class ReplayBufferDataset(Dataset):
             'action_transform': action_transform,
             'colour': colour,
             'selection_mask': selection_mask,
-            'reward': torch.tensor(transition['reward'], dtype=torch.float32),
-            'done': torch.tensor(float(transition['done']), dtype=torch.float32),
+            'reward': self._to_tensor(transition['reward'], torch.float32),
+            'done': self._to_tensor(float(transition['done']), torch.float32),
             'shape_h': shape_h,
             'shape_w': shape_w,
             'num_colors_grid': num_colors_grid,
@@ -135,7 +179,7 @@ class ReplayBufferDataset(Dataset):
         
         # Add next_state for modes that need it
         if self.mode in ['selection_color', 'end_to_end']:
-            next_state = torch.tensor(transition['next_state'], dtype=torch.float32)
+            next_state = self._to_tensor(transition['next_state'], torch.float32)
             sample['next_state'] = next_state
         
         # Add transition_type if present
