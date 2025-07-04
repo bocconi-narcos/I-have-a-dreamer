@@ -50,6 +50,7 @@ selection_mask:
       dropout_rate: 0.1
       input_channels: 1
       image_size: [10, 10]
+      vocab_size: 12
     cnn:
       num_conv_layers: 2
       base_filters: 16
@@ -71,6 +72,7 @@ selection_mask:
       patch_size: 2
       input_channels: 1
       image_size: [10, 10]
+      vocab_size: 12
   # Transformer parameters for selection mask predictor
   transformer_depth: 2
   transformer_heads: 2
