@@ -1,12 +1,12 @@
 # Unified Training Configuration for Sequential Decision-Making Modules
 
 # Data
-buffer_path: "data/buffer.h5"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "data/buffer_100.pt"  # Path to replay buffer file (use dummy data if not found)
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
 latent_dim: 128
-use_pretrained_encoder: true  # Set to true to load pretrained encoder from best_model_autoencoder.pth
+use_pretrained_encoder: false  # Set to true to load pretrained encoder from best_model_autoencoder.pth
 pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained autoencoder checkpoint
 freeze_pretrained_encoder: true  # Set to true to freeze pretrained encoder parameters
 
@@ -14,7 +14,7 @@ encoder_params:
   depth: 4
   heads: 16
   mlp_dim: 512
-  transformer_dim: 128
+  transformer_dim: 64
   pool: "cls"
   dropout: 0.2
   emb_dropout: 0.2

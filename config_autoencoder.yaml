@@ -1,5 +1,5 @@
-buffer_path: data/buffer_50.h5
-latent_dim: 32
+buffer_path: data/buffer_100.pt
+latent_dim: 54
 batch_size: 64
 num_epochs: 150
 learning_rate: 0.0004
@@ -12,10 +12,10 @@ num_transform_actions: 10
 encoder_params:
   image_size: [10, 10]
   input_channels: 1
-  depth: 5
+  depth: 3
   heads: 16
   mlp_dim: 512
-  transformer_dim: 128
+  transformer_dim: 64
   dropout: 0.2
   emb_dropout: 0.2
   scaled_position_embeddings: false
