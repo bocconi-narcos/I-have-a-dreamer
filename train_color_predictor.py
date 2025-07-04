@@ -96,9 +96,9 @@ def train_color_predictor():
     use_pretrained_encoder                  = config.get('use_pretrained_encoder', False)
     pretrained_encoder_path                 = config.get('pretrained_encoder_path', 'best_model_autoencoder.pth')
     freeze_pretrained_encoder               = config.get('freeze_pretrained_encoder', False)
-    num_color_selection_fns                 = config['num_color_selection_fns']
-    num_selection_fns                       = config['num_selection_fns']
-    num_transform_actions                   = config['num_transform_actions']
+    num_color_selection_fns                 = config['action_embedders']['action_color_embedder']['num_actions']
+    num_selection_fns                       = config['action_embedders']['action_selection_embedder']['num_actions']
+    num_transform_actions                   = config['action_embedders']['action_transform_embedder']['num_actions']
     num_arc_colors                          = config['num_arc_colors']
     color_predictor_hidden_dim              = config['color_predictor']['hidden_dim']
     batch_size                              = config['batch_size']
@@ -106,7 +106,7 @@ def train_color_predictor():
     learning_rate                           = config['learning_rate']
     num_workers                             = config['num_workers']
     log_interval                            = config['log_interval']
-    action_embedding_dim                    = config['action_embedding_dim']
+    action_embedding_dim                    = config['action_embedders']['action_color_embedder']['embed_dim']
 
     # State shape (channels, H, W) or (H, W)
     image_size                              = encoder_params.get('image_size', [10, 10])
@@ -121,7 +121,7 @@ def train_color_predictor():
         num_color_selection_fns=num_color_selection_fns,
         num_selection_fns=num_selection_fns,
         num_transform_actions=num_transform_actions,
-        num_arc_colors=11,
+        num_arc_colors=num_arc_colors-1,
         state_shape=state_shape,
         mode='color_only'
     )
