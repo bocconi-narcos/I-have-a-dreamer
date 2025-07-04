@@ -1,7 +1,7 @@
 # Unified Training Configuration for Sequential Decision-Making Modules
 
 # Data
-buffer_path: "data/buffer_100.pt"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "data/buffer_10.pt"  # Path to replay buffer file (use dummy data if not found)
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
@@ -9,6 +9,7 @@ latent_dim: 128
 use_pretrained_encoder: false  # Set to true to load pretrained encoder from best_model_autoencoder.pth
 pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained autoencoder checkpoint
 freeze_pretrained_encoder: true  # Set to true to freeze pretrained encoder parameters
+num_arc_colors: 12  # Number of colors in the arc (used for color prediction)
 
 encoder_params:
   depth: 4
@@ -23,16 +24,25 @@ encoder_params:
   scaled_position_embeddings: false
   colors_vocab_size: 12 
 
-# Color Selection Functions
-num_color_selection_fns: 22  # Set this to the number of color selection functions in DSL
-num_arc_colors: 10
-action_embedding_dim: 32
+action_embedders:
+  # Action Embedding for Color Selection
+  action_color_embedder:
+    num_actions: 23  # Set this to the number of color selection functions in DSL
+    embed_dim: 32  # Dimension of the action embedding
+    dropout_p: 0.2
 
-# Selection Functions
-num_selection_fns: 8  # Set this to the number of selection functions in DSL
+  # Action Embedding for Selection Functions
+  action_selection_embedder:
+    num_actions: 6  # Set this to the number of selection functions in DSL
+    embed_dim: 32  # Dimension of the action embedding
+    dropout_p: 0.2
 
-# Transform Functions
-num_transform_actions: 8  # Set this to the number of transform actions in DSL
+  # Action Embedding for Transform Functions
+  action_transform_embedder:
+    num_actions: 18  # Set this to the number of transform actions in DSL
+    embed_dim: 32  # Dimension of the action embedding
+    dropout_p: 0.2
+
 
 # Color Predictor Module
 color_predictor:
@@ -40,28 +50,8 @@ color_predictor:
 
 # Selection Mask Prediction Module
 selection_mask:
-  mask_encoder_type: "mlp"  # Options: "mlp", "cnn", "vit"
   latent_mask_dim: 64
   mask_encoder_params:
-    mlp:
-      num_hidden_layers: 2
-      hidden_dim: 128
-      activation_fn_str: "relu"
-      dropout_rate: 0.1
-      input_channels: 1
-      image_size: [10, 10]
-      vocab_size: 12
-    cnn:
-      num_conv_layers: 2
-      base_filters: 16
-      kernel_size: 3
-      stride: 2
-      padding: 1
-      activation_fn_str: "relu"
-      fc_hidden_dim: null
-      dropout_rate: 0.1
-      input_channels: 1
-      image_size: [10, 10]
     vit:
       depth: 2
       heads: 2
