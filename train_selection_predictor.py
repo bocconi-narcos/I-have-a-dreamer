@@ -149,7 +149,18 @@ def train_selection_predictor():
         encoder_params=encoder_params
     ).to(device)
     color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
-    mask_encoder = MaskEncoder(mask_encoder_type, **mask_encoder_params).to(device)
+    # mask_encoder = MaskEncoder(mask_encoder_type, **mask_encoder_params).to(device)
+    mask_encoder = MaskEncoder(
+    image_size=mask_encoder_params['image_size'],
+    vocab_size=mask_encoder_params['vocab_size'],
+    emb_dim=mask_encoder_params.get('emb_dim', 64),
+    depth=mask_encoder_params.get('depth', 4),
+    heads=mask_encoder_params.get('heads', 8),
+    mlp_dim=mask_encoder_params.get('mlp_dim', 512),
+    dropout=mask_encoder_params.get('dropout', 0.2),
+    emb_dropout=mask_encoder_params.get('emb_dropout', 0.2),
+    padding_value=mask_encoder_params.get('padding_value', -1)
+    ).to(device)
     
     # Updated SelectionMaskPredictor initialization
     selection_mask_predictor = SelectionMaskPredictor(
