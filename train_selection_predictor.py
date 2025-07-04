@@ -35,6 +35,9 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
     with torch.no_grad():
         for batch in dataloader:
             state = batch['state'].to(device)
+            if state.dim() == 4 and state.shape[1] == 1:
+                state = state.squeeze(1)
+            state = state.long()
             action_colour = batch['action_colour'].to(device)
             action_selection = batch['action_selection'].to(device)
             target_colour = batch['colour'].to(device)
@@ -49,8 +52,10 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
                 state = state.unsqueeze(1)
                 selection_mask = selection_mask.unsqueeze(1)
             
+            print("State min:", state.min().item(), "max:", state.max().item())
+            
             latent = state_encoder(
-                state.float(),
+                state,
                 shape_w=shape_w,
                 shape_h=shape_h,
                 num_unique_colors=num_colors_grid,
@@ -84,6 +89,13 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
     avg_color_loss = total_color_loss / total
     color_accuracy = color_correct / total
     return avg_selection_loss, avg_color_loss, color_accuracy
+
+def action_selection_embedder():
+    
+    
+def action_color_embedder():
+    
+    
 
 # --- Main Training Loop ---
 def train_selection_predictor():
@@ -218,6 +230,9 @@ def train_selection_predictor():
         
         for i, batch in enumerate(train_loader):
             state = batch['state'].to(device)
+            if state.dim() == 4 and state.shape[1] == 1:
+                state = state.squeeze(1)
+            state = state.long()
             action_colour = batch['action_colour'].to(device)
             action_selection = batch['action_selection'].to(device)
             target_colour = batch['colour'].to(device)
@@ -232,8 +247,10 @@ def train_selection_predictor():
                 state = state.unsqueeze(1)
                 selection_mask = selection_mask.unsqueeze(1)
             
+            print("State min:", state.min().item(), "max:", state.max().item())
+            
             latent = state_encoder(
-                state.float(),
+                state,
                 shape_w=shape_w,
                 shape_h=shape_h,
                 num_unique_colors=num_colors_grid,
@@ -244,7 +261,7 @@ def train_selection_predictor():
             action_selection_onehot = one_hot(action_selection, num_selection_fns)
             
             # Color prediction
-            color_input = torch.cat([latent, action_colour_onehot], dim=1)
+            action_color_embedding = 
             color_logits = color_predictor(color_input)
             color_loss = color_criterion(color_logits, target_colour)
             
