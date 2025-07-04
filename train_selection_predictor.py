@@ -174,10 +174,14 @@ def train_selection_predictor():
         transformer_mlp_dim=transformer_mlp_dim,
         dropout=transformer_dropout
     ).to(device)
-
+    
+    # Create a color selection embedder and action selection embedder, and add in optimizer these parameters
+    # Color predictor takes the embedded action, learnable embedding, so actions and subactions are not one hot encoded but latent vectors. 
+    # Take state, action_colour etc, embed state, embed actions, pass color predictor, finally get logits.
+    
     color_criterion = nn.CrossEntropyLoss()
     selection_criterion = nn.MSELoss()
-    vicreg_loss_fn = VICRegLoss(sim_coeff=vicreg_sim_coeff, std_coeff=vicreg_std_coeff, cov_coeff=vicreg_cov_coeff)
+    # vicreg_loss_fn = VICRegLoss(sim_coeff=vicreg_sim_coeff, std_coeff=vicreg_std_coeff, cov_coeff=vicreg_cov_coeff)
     
     # Optimize all modules together
     optimizer = optim.AdamW(
