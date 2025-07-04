@@ -39,12 +39,24 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
             action_selection = batch['action_selection'].to(device)
             target_colour = batch['colour'].to(device)
             selection_mask = batch['selection_mask'].to(device)
+            shape_w = batch['shape_w'].to(device)
+            shape_h = batch['shape_h'].to(device)
+            num_colors_grid = batch['num_colors_grid'].to(device)
+            most_present_color = batch['most_present_color'].to(device)
+            least_present_color = batch['least_present_color'].to(device)
             
             if state.dim() == 3:
                 state = state.unsqueeze(1)
                 selection_mask = selection_mask.unsqueeze(1)
             
-            latent = state_encoder(state.float())
+            latent = state_encoder(
+                state.float(),
+                shape_w=shape_w,
+                shape_h=shape_h,
+                num_unique_colors=num_colors_grid,
+                most_common_color=most_present_color,
+                least_common_color=least_present_color
+            )
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
             action_selection_onehot = one_hot(action_selection, num_selection_fns)
             
@@ -210,12 +222,24 @@ def train_selection_predictor():
             action_selection = batch['action_selection'].to(device)
             target_colour = batch['colour'].to(device)
             selection_mask = batch['selection_mask'].to(device)
+            shape_w = batch['shape_w'].to(device)
+            shape_h = batch['shape_h'].to(device)
+            num_colors_grid = batch['num_colors_grid'].to(device)
+            most_present_color = batch['most_present_color'].to(device)
+            least_present_color = batch['least_present_color'].to(device)
             
             if state.dim() == 3:
                 state = state.unsqueeze(1)
                 selection_mask = selection_mask.unsqueeze(1)
             
-            latent = state_encoder(state.float())
+            latent = state_encoder(
+                state.float(),
+                shape_w=shape_w,
+                shape_h=shape_h,
+                num_unique_colors=num_colors_grid,
+                most_common_color=most_present_color,
+                least_common_color=least_present_color
+            )
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
             action_selection_onehot = one_hot(action_selection, num_selection_fns)
             

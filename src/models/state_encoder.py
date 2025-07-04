@@ -129,6 +129,9 @@ class StateEncoder(nn.Module):
             (B, latent_dim) pooled CLS representation.
         """
 
+        if x.dim() == 4 and x.shape[1] == 1:
+            x = x.squeeze(1)  # (B, H, W)
+
         B, H, W = x.shape
 
         # 1) mask & shift tokens
