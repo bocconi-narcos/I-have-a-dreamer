@@ -195,3 +195,4 @@ cython_debug/
 \wandb
 *.DS_Store
 data/
+wandb/
