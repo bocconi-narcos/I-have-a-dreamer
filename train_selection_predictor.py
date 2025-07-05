@@ -23,6 +23,7 @@ def one_hot(indices, num_classes):
 
 # --- Validation Metrics ---
 def evaluate_selection_and_color(selection_predictor, color_predictor, state_encoder, mask_encoder, 
+                                colour_selection_embedder, selection_embedder,
                                 dataloader, device, criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn=None):
     selection_predictor.eval()
     color_predictor.eval()
@@ -52,7 +53,7 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
                 state = state.unsqueeze(1)
                 selection_mask = selection_mask.unsqueeze(1)
             
-            print("State min:", state.min().item(), "max:", state.max().item())
+            # print("State min:", state.min().item(), "max:", state.max().item())
             
             latent = state_encoder(
                 state,
@@ -65,14 +66,15 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
             action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
             action_selection_onehot = one_hot(action_selection, num_selection_fns)
             
-            # Color prediction
-            color_input = torch.cat([latent, action_colour_onehot], dim=1)
-            color_logits = color_predictor(color_input)
+            # Color prediction - using embedded actions
+            action_color_embedding = colour_selection_embedder(action_colour_onehot)
+            color_logits = color_predictor(latent, action_color_embedding)
             color_loss = criterion(color_logits, target_colour)
             
-            # Selection mask prediction - updated to use new signature
-            pred_latent_mask = selection_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
-            target_latent_mask = mask_encoder(selection_mask)
+            # Selection mask prediction - now using embedded selection actions
+            action_selection_embedding = selection_embedder(action_selection_onehot)
+            pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
+            target_latent_mask = mask_encoder(selection_mask.long())
             
             if use_vicreg and vicreg_loss_fn is not None:
                 selection_loss, _, _, _ = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
@@ -189,10 +191,10 @@ def train_selection_predictor():
     padding_value=mask_encoder_params.get('padding_value', -1)
     ).to(device)
     
-    # Updated SelectionMaskPredictor initialization
+    # Updated SelectionMaskPredictor initialization - now takes embedded selection actions
     selection_mask_predictor = SelectionMaskPredictor(
         state_dim=latent_dim,
-        selection_action_dim=num_selection_fns,
+        selection_action_embed_dim=selection_dim,  # Use embedded dimension instead of one-hot
         color_pred_dim=num_arc_colors-1,  # Assuming color prediction dimension
         latent_mask_dim=latent_mask_dim,
         transformer_depth=transformer_depth,
@@ -223,12 +225,14 @@ def train_selection_predictor():
     selection_criterion = nn.MSELoss()
     vicreg_loss_fn = VICRegLoss(sim_coeff=vicreg_sim_coeff, std_coeff=vicreg_std_coeff, cov_coeff=vicreg_cov_coeff)
     
-    # Optimize all modules together
+    # Optimize all modules together - now including both embedders
     optimizer = optim.AdamW(
         list(state_encoder.parameters()) + 
         list(color_predictor.parameters()) + 
         list(mask_encoder.parameters()) + 
-        list(selection_mask_predictor.parameters()), 
+        list(selection_mask_predictor.parameters()) +
+        list(colour_selection_embedder.parameters()) +
+        list(selection_embedder.parameters()), 
         lr=learning_rate
     )
 
@@ -284,10 +288,10 @@ def train_selection_predictor():
             color_loss_item = color_loss.item()
 
 
-            # Selection mask prediction - updated to use new signature
-            #action_selection_embedding = selection_embedder(action_selection_onehot)
+            # Selection mask prediction - now using embedded selection actions
+            action_selection_embedding = selection_embedder(action_selection_onehot)
 
-            pred_latent_mask = selection_mask_predictor(latent, action_selection_onehot, color_logits.softmax(dim=1))
+            pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.long())
             
             if use_vicreg:
@@ -309,7 +313,9 @@ def train_selection_predictor():
                 print(f"Epoch {epoch+1} Batch {i+1}/{len(train_loader)} - Color Loss: {color_loss.item():.4f} | Selection Loss: {selection_loss.item():.4f}")
 
         avg_selection_loss, avg_color_loss, color_accuracy = evaluate_selection_and_color(
-            selection_mask_predictor, color_predictor, state_encoder, mask_encoder, val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn)
+            selection_mask_predictor, color_predictor, state_encoder, mask_encoder, 
+            colour_selection_embedder, selection_embedder,
+            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn)
         print(f"Epoch {epoch+1}/{num_epochs} - Train Selection Loss: {total_selection_loss/len(train_loader.dataset):.4f} | Train Color Loss: {total_color_loss/len(train_loader.dataset):.4f} | Val Selection Loss: {avg_selection_loss:.4f} | Val Color Loss: {avg_color_loss:.4f} | Val Color Acc: {color_accuracy:.4f}")
         if avg_selection_loss < best_val_loss:
             best_val_loss = avg_selection_loss
@@ -318,7 +324,9 @@ def train_selection_predictor():
                 'state_encoder': state_encoder.state_dict(),
                 'color_predictor': color_predictor.state_dict(),
                 'mask_encoder': mask_encoder.state_dict(),
-                'selection_mask_predictor': selection_mask_predictor.state_dict()
+                'selection_mask_predictor': selection_mask_predictor.state_dict(),
+                'colour_selection_embedder': colour_selection_embedder.state_dict(),
+                'selection_embedder': selection_embedder.state_dict()
             }, save_path)
             print(f"New best model saved to {save_path}")
         else:

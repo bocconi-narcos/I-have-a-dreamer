@@ -6,10 +6,10 @@ from src.models.base.transformer_blocks import Transformer
 class SelectionMaskPredictor(nn.Module):
     """
     Transformer-based predictor for the latent mask.
-    Takes encoded_state and concat(selection_action_onehot, color_prediction) as inputs.
+    Takes encoded_state and concat(embedded_selection_action, color_prediction) as inputs.
     Args:
         state_dim (int): Dimension of encoded_state
-        selection_action_dim (int): Dimension of selection_action_onehot
+        selection_action_embed_dim (int): Dimension of embedded selection action
         color_pred_dim (int): Dimension of color_prediction
         latent_mask_dim (int): Output dimension of the latent mask
         transformer_depth (int): Number of transformer layers
@@ -18,11 +18,11 @@ class SelectionMaskPredictor(nn.Module):
         transformer_mlp_dim (int): MLP dimension inside transformer
         dropout (float): Dropout rate
     """
-    def __init__(self, state_dim, selection_action_dim, color_pred_dim, latent_mask_dim,
+    def __init__(self, state_dim, selection_action_embed_dim, color_pred_dim, latent_mask_dim,
                  transformer_depth=2, transformer_heads=2, transformer_dim_head=64, transformer_mlp_dim=128, dropout=0.1):
         super().__init__()
         self.state_dim = state_dim
-        self.input2_dim = selection_action_dim + color_pred_dim
+        self.input2_dim = selection_action_embed_dim + color_pred_dim
         self.latent_mask_dim = latent_mask_dim
 
         # Project both inputs to latent_mask_dim if needed
@@ -44,11 +44,11 @@ class SelectionMaskPredictor(nn.Module):
         self.apply(initialize_weights)
         nn.init.normal_(self.pos_embed, std=0.02)
 
-    def forward(self, encoded_state, selection_action_onehot, color_prediction):
+    def forward(self, encoded_state, embedded_selection_action, color_prediction):
         # encoded_state: (B, state_dim)
-        # selection_action_onehot: (B, selection_action_dim)
+        # embedded_selection_action: (B, selection_action_embed_dim)
         # color_prediction: (B, color_pred_dim)
-        input2 = torch.cat([selection_action_onehot, color_prediction], dim=1)  # (B, input2_dim)
+        input2 = torch.cat([embedded_selection_action, color_prediction], dim=1)  # (B, input2_dim)
         state_proj = self.state_proj(encoded_state)  # (B, latent_mask_dim)
         input2_proj = self.input2_proj(input2)       # (B, latent_mask_dim)
         x = torch.stack([state_proj, input2_proj], dim=1)  # (B, 2, latent_mask_dim)
