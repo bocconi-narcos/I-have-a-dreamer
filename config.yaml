@@ -1,7 +1,7 @@
 # Unified Training Configuration for Sequential Decision-Making Modules
 
 # Data
-buffer_path: "data/buffer_100.pt"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "data/buffer_50.pt"  # Path to replay buffer file (use dummy data if not found)
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
@@ -43,7 +43,6 @@ action_embedders:
     embed_dim: 32  # Dimension of the action embedding
     dropout_p: 0.2
 
-
 # Color Predictor Module
 color_predictor:
   hidden_dim: 512 #NOTE: this should be the same as the state encoder hidden dim for attention
@@ -52,23 +51,24 @@ color_predictor:
 selection_mask:
   latent_mask_dim: 128
   mask_encoder_params:
-    vit:
-      depth: 4
-      heads: 8
-      mlp_dim: 256
-      pool: "cls"
-      dropout: 0.1
-      emb_dropout: 0.1
-      patch_size: 2
-      input_channels: 1
-      image_size: [10, 10]
-      vocab_size: 3
-  # Transformer parameters for selection mask predictor
-  transformer_depth: 2
-  transformer_heads: 2
-  transformer_dim_head: 32
-  transformer_mlp_dim: 64
-  transformer_dropout: 0.1
+    depth: 4
+    heads: 8
+    mlp_dim: 256
+    pool: "cls"
+    dropout: 0.1
+    emb_dropout: 0.1
+    patch_size: 1
+    input_channels: 1
+    image_size: [10, 10]
+    vocab_size: 3
+  mask_predictor_params:
+    transformer_depth: 2
+    transformer_heads: 2
+    transformer_dim_head: 32
+    transformer_mlp_dim: 64
+    transformer_dropout: 0.1
+
+  
   use_vicreg: true
   vicreg_sim_coeff: 5
   vicreg_std_coeff: 25
@@ -121,7 +121,6 @@ vicreg:              # Configuration for VICReg loss in color predictor
       proj_hidden_dim: 512
       proj_output_dim: 512
    
-
 # Training (Shared across all modules)
 batch_size: 96
 num_epochs: 200

@@ -122,33 +122,47 @@ def train_selection_predictor():
     """
     config = load_config()
     buffer_path = config['buffer_path']
-    encoder_type = config['encoder_type']
     latent_dim = config['latent_dim']
+
+    # Encoder parameters
     encoder_params = config['encoder_params']
+    mask_encoder_params = config['selection_mask']['mask_encoder_params']
+
+    # Mask Encoder parameters
+    latent_mask_dim = config['selection_mask']['latent_mask_dim']
+    mask_encoder_depth = mask_encoder_params['depth']
+    mask_encoder_heads = mask_encoder_params['heads']
+    mask_encoder_mlp_dim = mask_encoder_params['mlp_dim']
+    mask_encoder_dropout = mask_encoder_params['dropout']
+    mask_encoder_vocab_size = mask_encoder_params['vocab_size']
+
+    # Color predictor parameters
+    mask_predictor_params = config['selection_mask']['mask_predictor_params']
+    transformer_depth = mask_predictor_params['transformer_depth']
+    transformer_heads = mask_predictor_params['transformer_heads']
+    transformer_dim_head = mask_predictor_params['transformer_dim_head']
+    transformer_mlp_dim = mask_predictor_params['transformer_mlp_dim']
+    transformer_dropout = mask_predictor_params['transformer_dropout']
+
+    # Action embedder parameters
     num_color_selection_fns = config['action_embedders']['action_color_embedder']['num_actions']
     num_selection_fns = config['action_embedders']['action_selection_embedder']['num_actions']
     num_transform_actions = config['action_embedders']['action_transform_embedder']['num_actions']
-    num_arc_colors = config['num_arc_colors']
-    color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
-
-    # Action embedder configurations
     color_selection_dim = config['action_embedders']['action_color_embedder']['embed_dim']
     selection_dim = config['action_embedders']['action_selection_embedder']['embed_dim']
     
-    # Selection mask config
+    # Color predictor parameters
+    num_arc_colors = config['num_arc_colors']
+    color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
+
+    # VICReg parameters
     selection_cfg = config['selection_mask']
-    mask_encoder_params = selection_cfg['mask_encoder_params']['vit']
-    latent_mask_dim = selection_cfg['latent_mask_dim']
-    transformer_depth = selection_cfg['transformer_depth']
-    transformer_heads = selection_cfg['transformer_heads']
-    transformer_dim_head = selection_cfg['transformer_dim_head']
-    transformer_mlp_dim = selection_cfg['transformer_mlp_dim']
-    transformer_dropout = selection_cfg['transformer_dropout']
     use_vicreg = selection_cfg['use_vicreg']
     vicreg_sim_coeff = selection_cfg['vicreg_sim_coeff']
     vicreg_std_coeff = selection_cfg['vicreg_std_coeff']
     vicreg_cov_coeff = selection_cfg['vicreg_cov_coeff']
     
+    # Training parameters
     batch_size = config['batch_size']
     num_epochs = config['num_epochs']
     learning_rate = config['learning_rate']
@@ -158,6 +172,8 @@ def train_selection_predictor():
     # State shape (channels, H, W) or (H, W)
     image_size = encoder_params.get('image_size', [10, 10])
     input_channels = encoder_params.get('input_channels', 1)
+
+
     if isinstance(image_size, int):
         state_shape = (input_channels, image_size, image_size)
     else:
@@ -194,15 +210,13 @@ def train_selection_predictor():
 
     # mask_encoder = MaskEncoder(mask_encoder_type, **mask_encoder_params).to(device)
     mask_encoder = MaskEncoder(
-    image_size=mask_encoder_params['image_size'],
-    vocab_size=mask_encoder_params['vocab_size'],
-    emb_dim=mask_encoder_params.get('emb_dim', 64),
-    depth=mask_encoder_params.get('depth', 4),
-    heads=mask_encoder_params.get('heads', 8),
-    mlp_dim=mask_encoder_params.get('mlp_dim', 512),
-    dropout=mask_encoder_params.get('dropout', 0.2),
-    emb_dropout=mask_encoder_params.get('emb_dropout', 0.2),
-    padding_value=mask_encoder_params.get('padding_value', -1)
+    image_size=image_size,
+    vocab_size=mask_encoder_vocab_size,
+    emb_dim=latent_mask_dim,
+    depth=mask_encoder_depth,
+    heads=mask_encoder_heads,
+    mlp_dim=mask_encoder_mlp_dim,
+    dropout=mask_encoder_dropout,
     ).to(device)
     
     # Updated SelectionMaskPredictor initialization - now takes embedded selection actions
@@ -236,7 +250,6 @@ def train_selection_predictor():
     # Take state, action_colour etc, embed state, embed actions, pass color predictor, finally get logits.
     
     color_criterion = nn.CrossEntropyLoss()
-    selection_criterion = nn.MSELoss()
     vicreg_loss_fn = VICRegLoss(sim_coeff=vicreg_sim_coeff, std_coeff=vicreg_std_coeff, cov_coeff=vicreg_cov_coeff)
     
     # Optimize all modules together - now including both embedders
@@ -316,8 +329,6 @@ def train_selection_predictor():
             # Calculate color logits and loss
             color_logits = color_predictor(latent, action_color_embedding)
             color_loss = color_criterion(color_logits, target_colour)
-            color_loss_item = color_loss.item()
-
 
             # Selection mask prediction - now using embedded selection actions
             action_selection_embedding = selection_embedder(action_selection_onehot)
@@ -346,7 +357,21 @@ def train_selection_predictor():
             )
             
             optimizer.step()
-            
+
+            # Log gradients to wandb
+            if WANDB_AVAILABLE and (i % log_interval == 0):
+                # Log training metrics
+                step = epoch * len(train_loader) + i
+                wandb.log({
+                    'batch/color_loss': color_loss.item(),
+                    'batch/selection_loss': selection_loss.item(),
+                    'batch/vicreg_sim_loss': sim_loss.item(),
+                    'batch/vicreg_std_loss': std_loss.item(),
+                    'batch/vicreg_cov_loss': cov_loss.item(),
+                    'batch/total_loss': total_loss.item(),
+                }, step=step)
+                
+             
             total_selection_loss += selection_loss.item() * state.size(0)
             total_color_loss += color_loss.item() * state.size(0)
             total_sim_loss += sim_loss.item() * state.size(0)
