@@ -1,7 +1,7 @@
 # Unified Training Configuration for Sequential Decision-Making Modules
 
 # Data
-buffer_path: "data/buffer_10.pt"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "data/buffer_250.pt"  # Path to replay buffer file (use dummy data if not found)
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
@@ -110,6 +110,18 @@ continuation_predictor:
   transformer_mlp_dim: 128
   transformer_dropout: 0.1
   proj_dim: null  # If provided, project latents to this dim
+
+vicreg:              # Configuration for VICReg loss in color predictor
+  selection:        # Configuration for VICReg loss in selection mask predictor
+    weight: 1       # General weight for the chosen auxiliary loss
+    params:
+      sim_coeff: 25
+      std_coeff: 25
+      cov_coeff: 1
+      eps: 0.0001
+      proj_hidden_dim: 512
+      proj_output_dim: 512
+   
 
 # Training (Shared across all modules)
 batch_size: 32
