@@ -194,4 +194,4 @@ cython_debug/
 .cursorindexingignore
 \wandb
 *.DS_Store
-
+data/
