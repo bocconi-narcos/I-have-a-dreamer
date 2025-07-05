@@ -87,7 +87,7 @@ class VICRegLoss(nn.Module):
         cov_loss = self.cov_coeff * (cov_loss_x + cov_loss_y) * 0.5  # Average over x and y
 
         # Clamp individual loss components to prevent explosions
-        sim_loss = torch.clamp(sim_loss, 0, 100)
+        sim_loss = torch.clamp(sim_loss, 0, 1000)
         std_loss = torch.clamp(std_loss, 0, 100)
         cov_loss = torch.clamp(cov_loss, 0, 100)
 

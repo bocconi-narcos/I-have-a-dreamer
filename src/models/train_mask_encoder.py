@@ -145,7 +145,7 @@ for epoch in range(num_epochs):
             'color_predictor': color_predictor.state_dict()
         }, save_path)
         print(f"New best model saved to {save_path}")
-    else:
+        else:
         epochs_no_improve += 1
         print(f"No improvement for {epochs_no_improve} epoch(s)")
     if epochs_no_improve >= patience:
@@ -155,3 +155,4 @@ for epoch in range(num_epochs):
 wandb.finish()
 
 # %%
+    

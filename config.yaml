@@ -1,11 +1,11 @@
 # Unified Training Configuration for Sequential Decision-Making Modules
 
 # Data
-buffer_path: "data/buffer_250.pt"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "data/buffer_100.pt"  # Path to replay buffer file (use dummy data if not found)
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
-latent_dim: 128
+latent_dim: 196
 use_pretrained_encoder: false  # Set to true to load pretrained encoder from best_model_autoencoder.pth
 pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained autoencoder checkpoint
 freeze_pretrained_encoder: true  # Set to true to freeze pretrained encoder parameters
@@ -15,7 +15,7 @@ encoder_params:
   depth: 4
   heads: 16
   mlp_dim: 512
-  transformer_dim: 64
+  transformer_dim: 96
   pool: "cls"
   dropout: 0.2
   emb_dropout: 0.2
@@ -50,30 +50,29 @@ color_predictor:
 
 # Selection Mask Prediction Module
 selection_mask:
-  latent_mask_dim: 64
+  latent_mask_dim: 128
   mask_encoder_params:
     vit:
-      depth: 2
-      heads: 2
-      mlp_dim: 64
+      depth: 4
+      heads: 8
+      mlp_dim: 256
       pool: "cls"
       dropout: 0.1
       emb_dropout: 0.1
       patch_size: 2
       input_channels: 1
       image_size: [10, 10]
-      vocab_size: 12
+      vocab_size: 3
   # Transformer parameters for selection mask predictor
   transformer_depth: 2
   transformer_heads: 2
   transformer_dim_head: 32
   transformer_mlp_dim: 64
   transformer_dropout: 0.1
-  loss_type: "mse"  # Options: "mse", "vicreg"
-  use_vicreg: false
-  vicreg_sim_coeff: 25.0
-  vicreg_std_coeff: 25.0
-  vicreg_cov_coeff: 1.0
+  use_vicreg: true
+  vicreg_sim_coeff: 5
+  vicreg_std_coeff: 25
+  vicreg_cov_coeff: 1
 
 # Next State Predictor Module
 next_state:
@@ -115,7 +114,7 @@ vicreg:              # Configuration for VICReg loss in color predictor
   selection:        # Configuration for VICReg loss in selection mask predictor
     weight: 1       # General weight for the chosen auxiliary loss
     params:
-      sim_coeff: 25
+      sim_coeff: 5
       std_coeff: 25
       cov_coeff: 1
       eps: 0.0001
@@ -124,7 +123,7 @@ vicreg:              # Configuration for VICReg loss in color predictor
    
 
 # Training (Shared across all modules)
-batch_size: 32
+batch_size: 96
 num_epochs: 200
 learning_rate: 0.0003
 num_workers: 0
