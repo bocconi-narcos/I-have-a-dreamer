@@ -1,4 +1,4 @@
-buffer_path: data/buffer_250.pt
+buffer_path: data/buffer_500.pt
 latent_dim: 128
 batch_size: 256
 num_epochs: 150
