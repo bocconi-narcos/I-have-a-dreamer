@@ -29,7 +29,6 @@ import wandb
 from src.models.state_encoder import StateEncoder
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
-import h5py
 
 def load_config(config_path="config_autoencoder.yaml"):
     with open(config_path, "r") as f:
@@ -38,57 +37,111 @@ def load_config(config_path="config_autoencoder.yaml"):
 class StepDistanceDataset(ReplayBufferDataset):
     """Extended dataset that includes target_state and step_distance_to_target"""
     
-    def _load_hdf5_buffer(self, buffer_path):
-        """Load replay buffer data from an HDF5 file including target state and step distance."""
+    def __init__(self, buffer_path, num_color_selection_fns, num_selection_fns, 
+                 num_transform_actions, num_arc_colors, state_shape, mode='full', num_samples=None):
+        # Initialize base class attributes without calling parent __init__
+        self.buffer_path = buffer_path
+        self.num_color_selection_fns = num_color_selection_fns
+        self.num_selection_fns = num_selection_fns
+        self.num_transform_actions = num_transform_actions
+        self.num_arc_colors = num_arc_colors
+        self.state_shape = state_shape
+        self.mode = mode
+        
+        # Load buffer data specifically for step distance training
+        if os.path.exists(buffer_path):
+            print(f"Loading replay buffer from {buffer_path}")
+            if buffer_path.endswith('.pt'):
+                import time
+                start_time = time.time()
+                self.buffer = self._load_pt_buffer(buffer_path)
+                end_time = time.time()
+                print(f"Loaded {len(self.buffer)} transitions in {end_time - start_time:.2f} seconds")
+            else:
+                raise ValueError(f"Unsupported buffer file format: {buffer_path}. Please use .pt files.")
+        else:
+            print(f"ERROR: Buffer file {buffer_path} not found. Please provide a valid replay buffer file.")
+            raise FileNotFoundError(f"Buffer file {buffer_path} not found.")
+        
+        # Limit samples if specified (for testing)
+        if num_samples is not None:
+            self.buffer = self.buffer[:num_samples]
+        
+        print(f"Dataset initialized with {len(self.buffer)} samples in {mode} mode")
+    
+    def _load_pt_buffer(self, buffer_path):
+        """Load replay buffer data from a .pt file including target state and step distance."""
         buffer = []
-        with h5py.File(buffer_path, 'r') as f:
-            num_transitions = f['state'].shape[0]
+        
+        # Load the buffer data
+        buffer_dict = torch.load(buffer_path, map_location='cpu')
+        
+        # Handle both dictionary format and list format
+        if isinstance(buffer_dict, dict) and 'state' in buffer_dict:
+            # Dictionary format with arrays for each field
+            num_transitions = len(buffer_dict['state'])
             
             for i in range(num_transitions):
                 # Skip transitions with invalid step distance (-1)
-                step_distance = f['step_distance_to_target'][i]
+                step_distance = buffer_dict['step_distance_to_target'][i]
                 if step_distance < 0:
                     continue
                     
                 transition = {
-                    'state': f['state'][i],
+                    'state': buffer_dict['state'][i],
                     'action': {
-                        'colour': f['action_colour'][i],
-                        'selection': f['action_selection'][i],
-                        'transform': f['action_transform'][i]
+                        'colour': buffer_dict['action_colour'][i],
+                        'selection': buffer_dict['action_selection'][i],
+                        'transform': buffer_dict['action_transform'][i]
                     },
-                    'selection_mask': f['selection_mask'][i],
-                    'next_state': f['next_state'][i],
-                    'target_state': f['target_state'][i],
+                    'selection_mask': buffer_dict['selection_mask'][i],
+                    'next_state': buffer_dict['next_state'][i],
+                    'target_state': buffer_dict['target_state'][i],
                     'step_distance_to_target': step_distance,
-                    'colour': f['colour'][i],
-                    'reward': f['reward'][i],
-                    'done': f['done'][i],
-                    'transition_type': f['transition_type'][i],
-                    'shape_h': f['shape_h'][i],
-                    'shape_w': f['shape_w'][i],
-                    'num_colors_grid': f['num_colors_grid'][i],
-                    'most_present_color': f['most_present_color'][i],
-                    'least_present_color': f['least_present_color'][i]
+                    'colour': buffer_dict['colour'][i],
+                    'reward': buffer_dict['reward'][i],
+                    'done': buffer_dict['done'][i],
+                    'transition_type': buffer_dict['transition_type'][i],
+                    'shape_h': buffer_dict['shape_h'][i],
+                    'shape_w': buffer_dict['shape_w'][i],
+                    'num_colors_grid': buffer_dict['num_colors_grid'][i],
+                    'most_present_color': buffer_dict['most_present_color'][i],
+                    'least_present_color': buffer_dict['least_present_color'][i]
                 }
                 buffer.append(transition)
+        else:
+            # List format - filter out transitions with invalid step distance
+            for transition in buffer_dict:
+                if transition.get('step_distance_to_target', -1) >= 0:
+                    buffer.append(transition)
+        
         return buffer
+    
+    def __len__(self):
+        return len(self.buffer)
+    
+    def _to_tensor(self, data, dtype):
+        """Convert data to tensor, handling both tensor and non-tensor inputs."""
+        if torch.is_tensor(data):
+            return data.clone().detach().to(dtype)
+        else:
+            return torch.tensor(data, dtype=dtype)
     
     def __getitem__(self, idx):
         """Get a single sample from the dataset including target state and step distance."""
         transition = self.buffer[idx]
         
         # Extract states and convert to tensor
-        state = torch.tensor(transition['state'], dtype=torch.long)
-        target_state = torch.tensor(transition['target_state'], dtype=torch.long)
-        step_distance = torch.tensor(transition['step_distance_to_target'], dtype=torch.float32)
+        state = self._to_tensor(transition['state'], torch.long)
+        target_state = self._to_tensor(transition['target_state'], torch.long)
+        step_distance = self._to_tensor(transition['step_distance_to_target'], torch.float32)
         
         # Extract grid statistics for state
-        shape_h = torch.tensor(transition['shape_h'], dtype=torch.long)
-        shape_w = torch.tensor(transition['shape_w'], dtype=torch.long)
-        num_colors_grid = torch.tensor(transition['num_colors_grid'], dtype=torch.long)
-        most_present_color = torch.tensor(transition['most_present_color'], dtype=torch.long)
-        least_present_color = torch.tensor(transition['least_present_color'], dtype=torch.long)
+        shape_h = self._to_tensor(transition['shape_h'], torch.long)
+        shape_w = self._to_tensor(transition['shape_w'], torch.long)
+        num_colors_grid = self._to_tensor(transition['num_colors_grid'], torch.long)
+        most_present_color = self._to_tensor(transition['most_present_color'], torch.long)
+        least_present_color = self._to_tensor(transition['least_present_color'], torch.long)
         
         # For target state, we'll use the same statistics as the current state
         # This is a simplification - ideally we'd compute target state statistics separately
