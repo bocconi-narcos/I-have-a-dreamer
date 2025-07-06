@@ -1,0 +1,128 @@
+[
+  {
+    "config_name": "baseline_no_pe",
+    "best_val_loss": 0.43104146409034727,
+    "best_val_acc": 0.8555,
+    "final_train_loss": 0.20915834357589483,
+    "training_time": 318.8624551296234,
+    "num_epochs": 43,
+    "num_parameters": 697835,
+    "config_details": {
+      "name": "baseline_no_pe",
+      "ape_type": "SinusoidalAPE2D",
+      "rpe_type": "None",
+      "rpe_abs": false,
+      "use_OPE": false,
+      "ape_mixer_strategy": "default",
+      "description": "Basic 2D sinusoidal APE (baseline)"
+    }
+  },
+  {
+    "config_name": "baseline_learned_ape",
+    "best_val_loss": 0.4757244791984558,
+    "best_val_acc": 0.8385,
+    "final_train_loss": 0.33930184322595597,
+    "training_time": 213.88940906524658,
+    "num_epochs": 28,
+    "num_parameters": 828907,
+    "config_details": {
+      "name": "baseline_learned_ape",
+      "ape_type": "LearnedAPE",
+      "rpe_type": "None",
+      "rpe_abs": false,
+      "use_OPE": false,
+      "ape_mixer_strategy": "default",
+      "description": "Standard learned absolute positional embeddings"
+    }
+  },
+  {
+    "config_name": "baseline_sinusoidal_ape",
+    "best_val_loss": 0.4544210155010223,
+    "best_val_acc": 0.8495,
+    "final_train_loss": 0.2424560692086816,
+    "training_time": 277.61129808425903,
+    "num_epochs": 38,
+    "num_parameters": 697835,
+    "config_details": {
+      "name": "baseline_sinusoidal_ape",
+      "ape_type": "SinusoidalAPE",
+      "rpe_type": "None",
+      "rpe_abs": false,
+      "use_OPE": false,
+      "ape_mixer_strategy": "default",
+      "description": "Standard sinusoidal absolute positional embeddings"
+    }
+  },
+  {
+    "config_name": "ape_2d_basic",
+    "best_val_loss": 0.4399350039958954,
+    "best_val_acc": 0.849,
+    "final_train_loss": 0.24341356189548968,
+    "training_time": 285.59618306159973,
+    "num_epochs": 39,
+    "num_parameters": 697835,
+    "config_details": {
+      "name": "ape_2d_basic",
+      "ape_type": "SinusoidalAPE2D",
+      "rpe_type": "None",
+      "rpe_abs": false,
+      "use_OPE": false,
+      "ape_mixer_strategy": "default",
+      "description": "2D sinusoidal APE with default mixing"
+    }
+  },
+  {
+    "config_name": "ape_2d_weighted_sum",
+    "best_val_loss": 0.45846866464614866,
+    "best_val_acc": 0.8445,
+    "final_train_loss": 0.262184886649251,
+    "training_time": 266.92979288101196,
+    "num_epochs": 36,
+    "num_parameters": 697838,
+    "config_details": {
+      "name": "ape_2d_weighted_sum",
+      "ape_type": "SinusoidalAPE2D",
+      "rpe_type": "None",
+      "rpe_abs": false,
+      "use_OPE": false,
+      "ape_mixer_strategy": "weighted_sum_no_norm",
+      "description": "2D sinusoidal APE with weighted sum mixing"
+    }
+  },
+  {
+    "config_name": "ape_2d_learnable_scaling",
+    "best_val_loss": 0.4472165365219116,
+    "best_val_acc": 0.855,
+    "final_train_loss": 0.24924611270427705,
+    "training_time": 272.7053532600403,
+    "num_epochs": 37,
+    "num_parameters": 697838,
+    "config_details": {
+      "name": "ape_2d_learnable_scaling",
+      "ape_type": "SinusoidalAPE2D",
+      "rpe_type": "None",
+      "rpe_abs": false,
+      "use_OPE": false,
+      "ape_mixer_strategy": "learnable_scaling",
+      "description": "2D sinusoidal APE with learnable scaling"
+    }
+  },
+  {
+    "config_name": "ape_2d_layer_norm",
+    "best_val_loss": 0.4528935899734497,
+    "best_val_acc": 0.843,
+    "final_train_loss": 0.24385172793269158,
+    "training_time": 288.1415321826935,
+    "num_epochs": 39,
+    "num_parameters": 697963,
+    "config_details": {
+      "name": "ape_2d_layer_norm",
+      "ape_type": "SinusoidalAPE2D",
+      "rpe_type": "None",
+      "rpe_abs": false,
+      "use_OPE": false,
+      "ape_mixer_strategy": "layer_norm",
+      "description": "2D sinusoidal APE with layer norm mixing"
+    }
+  }
+]

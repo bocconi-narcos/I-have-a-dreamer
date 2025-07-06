@@ -8,7 +8,7 @@ encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
 latent_dim: 128
 use_pretrained_encoder: false  # Set to true to load pretrained encoder from best_model_autoencoder.pth
 pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained autoencoder checkpoint
-freeze_pretrained_encoder: true  # Set to true to freeze pretrained encoder parameters
+freeze_pretrained_encoder: false  # Set to true to freeze pretrained encoder parameters
 num_arc_colors: 12  # Number of colors in the arc (used for color prediction)
 
 encoder_params:
@@ -113,21 +113,32 @@ continuation_predictor:
 
 # Training (Shared across all modules)
 batch_size: 32
-num_epochs: 200
+num_epochs: 50
 learning_rate: 0.0003
 num_workers: 0
 log_interval: 10
 
 # Early Stopping and Model Saving
 color_predictor_training:
-  early_stopping_patience: 10
+  early_stopping_patience: 3
   best_model_save_path: "best_model_color_predictor.pth"
 selection_predictor_training:
-  early_stopping_patience: 10
+  early_stopping_patience: 3
   best_model_save_path: "best_model_selection_predictor.pth"
 next_state_predictor_training:
-  early_stopping_patience: 10
+  early_stopping_patience: 3
   best_model_save_path: "best_model_next_state_predictor.pth"
 full_model_training:
-  early_stopping_patience: 10
-  best_model_save_path: "best_model_full_model.pth" 
+  early_stopping_patience: 3
+  best_model_save_path: "best_model_full_model.pth"
+
+# Add this to your config.yaml file
+early_stopping:
+  patience: 4                          # Epochs to wait for improvement
+  min_delta: 0.001                     # Minimum improvement threshold (1e-5)
+  restore_best_weights: true           # Restore best weights after training
+  monitor_metric: "val_loss"           # Metric to monitor ("val_loss" or "val_acc")
+  mode: "min"                          # "min" for loss, "max" for accuracy
+  min_epochs: 10                       # Minimum epochs before early stopping can trigger
+  max_epochs_without_improvement: 30   # Hard stop after this many epochs
+  use_adaptive_patience: false         # Whether to use adaptive patience 
