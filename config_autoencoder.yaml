@@ -1,6 +1,6 @@
-buffer_path: data/buffer_100.pt
-latent_dim: 54
-batch_size: 64
+buffer_path: data/buffer_250.pt
+latent_dim: 128
+batch_size: 256
 num_epochs: 150
 learning_rate: 0.0004
 num_workers: 0
@@ -12,11 +12,11 @@ num_transform_actions: 10
 encoder_params:
   image_size: [10, 10]
   input_channels: 1
-  depth: 3
+  depth: 4
   heads: 16
   mlp_dim: 512
-  transformer_dim: 64
-  dropout: 0.2
+  transformer_dim: 96
+  dropout: 0.4
   emb_dropout: 0.2
   scaled_position_embeddings: false
   colors_vocab_size: 12
