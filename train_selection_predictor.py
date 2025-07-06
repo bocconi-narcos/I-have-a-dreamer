@@ -434,6 +434,7 @@ def train_selection_predictor():
                 'colour_selection_embedder': colour_selection_embedder.state_dict(),
                 'selection_embedder': selection_embedder.state_dict()
             }, save_path)
+            torch.save(state_encoder.state_dict(), 'best_model_state_encoder.pth')
             improvement_status = f" ✓ New best model saved!"
         else:
             epochs_no_improve += 1

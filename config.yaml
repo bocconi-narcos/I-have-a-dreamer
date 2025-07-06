@@ -1,7 +1,7 @@
 # Unified Training Configuration for Sequential Decision-Making Modules
 
 # Data
-buffer_path: "data/buffer_50.pt"  # Path to replay buffer file (use dummy data if not found)
+buffer_path: "data/buffer_500.pt"  # Path to replay buffer file (use dummy data if not found)
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
