@@ -376,6 +376,11 @@ def train_step_distance_encoder():
 
             if (i + 1) % log_interval == 0:
                 print(f"\rEpoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}", end='', flush=True)
+                
+                # Log batch metrics to wandb
+                wandb.log({
+                    "batch_loss": loss.item(),
+                })
 
         avg_loss = total_loss / len(train_loader.dataset)
         val_loss, val_metrics = evaluate(state_encoder, val_loader, device, alpha)
