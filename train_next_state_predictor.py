@@ -353,8 +353,8 @@ def train_next_state_predictor():
             total_selection_loss += selection_loss.item() * state.size(0)
             total_next_state_loss += next_state_loss.item() * state.size(0)
 
-            if (i + 1) % log_interval == 0:
-                print(f"Epoch {epoch+1} Batch {i+1}/{len(train_loader)} - Color: {color_loss.item():.4f} | Selection: {selection_loss.item():.4f} | Next State: {next_state_loss.item():.4f}")
+            # if (i + 1) % log_interval == 0:
+            #     print(f"Epoch {epoch+1} Batch {i+1}/{len(train_loader)} - Color: {color_loss.item():.4f} | Selection: {selection_loss.item():.4f} | Next State: {next_state_loss.item():.4f}")
                 # --- WANDB LOGGING FOR BATCH ---
                 wandb.log({  # type: ignore
                     "batch_color_loss": color_loss.item(),
