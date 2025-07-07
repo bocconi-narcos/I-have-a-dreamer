@@ -54,13 +54,14 @@ selection_mask:
     depth: 4
     heads: 8
     mlp_dim: 256
-    pool: "cls"
+    # pool: "cls"
     dropout: 0.1
     emb_dropout: 0.1
-    patch_size: 1
-    input_channels: 1
+    # patch_size: 1
+    # input_channels: 1
     image_size: [10, 10]
     vocab_size: 3
+    emb_dim: 128
   mask_predictor_params:
     transformer_depth: 2
     transformer_heads: 2
