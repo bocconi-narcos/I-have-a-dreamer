@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from src.utils.weight_init import initialize_weights
-from models.base.transformer_blocks import PreNorm, FeedForward, Attention, Transformer
+from src.models.base.transformer_blocks import PreNorm, FeedForward, Attention, Transformer
 
 class NextStatePredictor(nn.Module):
     """
