@@ -14,6 +14,8 @@ from src.models.predictors.next_state_predictor import NextStatePredictor
 from src.losses.vicreg import VICRegLoss  # Not used, but kept for reference
 from src.data import ReplayBufferDataset
 from src.models.action_embed import ActionEmbedder
+from tqdm import tqdm
+import torch.nn.functional as F  # type: ignore
 
 # --- EMA Utility ---
 def update_ema(target_model, source_model, decay=0.995):
@@ -47,6 +49,11 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
     total = 0
     selection_criterion = nn.MSELoss()
     next_state_criterion = nn.MSELoss()
+    # For per-class accuracy
+    color_class_correct = None
+    color_class_total = None
+    # For next state predictor metrics
+    total_next_state_cosine = 0
     with torch.no_grad():
         for batch in dataloader:
             state = batch['state'].to(device)
@@ -83,6 +90,15 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             action_color_embedding = colour_selection_embedder(action_colour_onehot)
             color_logits = color_predictor(latent, action_color_embedding)
             color_loss = color_criterion(color_logits, target_colour)
+            color_preds = torch.argmax(color_logits, dim=1)
+            color_correct += (color_preds == target_colour).sum().item()
+            # Per-class accuracy
+            if color_class_correct is None:
+                color_class_correct = torch.zeros(color_logits.shape[1], device=device)
+                color_class_total = torch.zeros(color_logits.shape[1], device=device)
+            for c in range(color_logits.shape[1]):
+                color_class_correct[c] += ((color_preds == c) & (target_colour == c)).sum().item()
+                color_class_total[c] += (target_colour == c).sum().item()
 
             # Selection mask prediction - now using embedded selection actions
             action_selection_embedding = selection_embedder(action_selection_onehot)
@@ -93,19 +109,33 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             # Next state prediction - pass pred_latent_mask as final latent selection
             pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
             next_state_loss = next_state_criterion(pred_next_latent, latent_next)
+            # Cosine similarity for next state prediction
+            pred_next_latent_norm = F.normalize(pred_next_latent, p=2, dim=-1)
+            latent_next_norm = F.normalize(latent_next, p=2, dim=-1)
+            cosine_sim = (pred_next_latent_norm * latent_next_norm).sum(dim=-1).mean().item()
+            total_next_state_cosine += cosine_sim * state.size(0)
 
             total_color_loss += color_loss.item() * state.size(0)
             total_selection_loss += selection_loss.item() * state.size(0)
             total_next_state_loss += next_state_loss.item() * state.size(0)
-            color_preds = torch.argmax(color_logits, dim=1)
-            color_correct += (color_preds == target_colour).sum().item()
             total += state.size(0)
 
     avg_color_loss = total_color_loss / total
     avg_selection_loss = total_selection_loss / total
     avg_next_state_loss = total_next_state_loss / total
     color_accuracy = color_correct / total
-    return avg_color_loss, avg_selection_loss, avg_next_state_loss, color_accuracy
+    # Per-class accuracy
+    if (
+        color_class_correct is not None and color_class_total is not None
+        and isinstance(color_class_correct, torch.Tensor)
+        and isinstance(color_class_total, torch.Tensor)
+        and color_class_correct.numel() > 0 and color_class_total.numel() > 0
+    ):
+        color_class_acc = (color_class_correct / (color_class_total + 1e-8)).tolist()
+    else:
+        color_class_acc = None
+    avg_next_state_cosine = total_next_state_cosine / total
+    return avg_color_loss, avg_selection_loss, avg_next_state_loss, color_accuracy, color_class_acc, avg_next_state_cosine
 
 # --- Main Training Loop ---
 def train_next_state_predictor():
@@ -247,7 +277,6 @@ def train_next_state_predictor():
         transformer_mlp_dim=transformer_mlp_dim_selection,
         dropout=transformer_dropout_selection
     ).to(device)
-    print(f"[SelectionMaskPredictor] Number of parameters: {sum(p.numel() for p in selection_mask_predictor.parameters())}")
     
     # Updated NextStatePredictor initialization
     next_state_predictor = NextStatePredictor(
@@ -261,7 +290,6 @@ def train_next_state_predictor():
         transformer_mlp_dim=transformer_mlp_dim_next_state,
         dropout=transformer_dropout_next_state
     ).to(device)
-    print(f"[NextStatePredictor] Number of parameters: {sum(p.numel() for p in next_state_predictor.parameters())}")
 
     # Loss functions
     color_criterion = nn.CrossEntropyLoss()
@@ -293,7 +321,7 @@ def train_next_state_predictor():
         total_color_loss = 0
         total_selection_loss = 0
         total_next_state_loss = 0
-        for i, batch in enumerate(train_loader):
+        for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
             state = batch['state'].to(device)
             next_state = batch['next_state'].to(device)
             action_colour = batch['action_colour'].to(device)
@@ -369,7 +397,7 @@ def train_next_state_predictor():
         avg_selection_loss = total_selection_loss / len(train_loader.dataset)
         avg_next_state_loss = total_next_state_loss / len(train_loader.dataset)
 
-        val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc = evaluate_all_modules(
+        val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine = evaluate_all_modules(
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
             colour_selection_embedder, selection_embedder,
             val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions
@@ -387,6 +415,8 @@ def train_next_state_predictor():
             "val_selection_loss": val_selection_loss,
             "val_next_state_loss": val_next_state_loss,
             "val_color_acc": val_color_acc,
+            "val_color_class_acc": val_color_class_acc,
+            "val_next_state_cosine": val_next_state_cosine,
             "val_total_loss": val_loss_sum
         })
         if val_loss_sum < best_val_loss:
