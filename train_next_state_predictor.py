@@ -250,7 +250,7 @@ def train_next_state_predictor():
     mask_encoder = MaskEncoder(**filtered_mask_encoder_params).to(device)
     
     color_predictor = ColorPredictor(latent_dim, num_arc_colors, color_predictor_hidden_dim, action_embedding_dim=color_selection_dim).to(device)
-    # print(f"[ColorPredictor] Number of parameters: {sum(p.numel() for p in color_predictor.parameters())}")
+    print(f"[ColorPredictor] Number of parameters: {sum(p.numel() for p in color_predictor.parameters())}")
     
     # Create action embedders
     colour_selection_embedder = ActionEmbedder(
