@@ -250,7 +250,7 @@ def train_next_state_predictor():
     mask_encoder = MaskEncoder(**filtered_mask_encoder_params).to(device)
     
     color_predictor = ColorPredictor(latent_dim, num_arc_colors, color_predictor_hidden_dim, action_embedding_dim=color_selection_dim).to(device)
-    print(f"[ColorPredictor] Number of parameters: {sum(p.numel() for p in color_predictor.parameters())}")
+    # print(f"[ColorPredictor] Number of parameters: {sum(p.numel() for p in color_predictor.parameters())}")
     
     # Create action embedders
     colour_selection_embedder = ActionEmbedder(
@@ -277,6 +277,7 @@ def train_next_state_predictor():
         transformer_mlp_dim=transformer_mlp_dim_selection,
         dropout=transformer_dropout_selection
     ).to(device)
+    print(f"[SelectionMaskPredictor] Number of parameters: {sum(p.numel() for p in selection_mask_predictor.parameters())}")
     
     # Updated NextStatePredictor initialization
     next_state_predictor = NextStatePredictor(
@@ -290,6 +291,7 @@ def train_next_state_predictor():
         transformer_mlp_dim=transformer_mlp_dim_next_state,
         dropout=transformer_dropout_next_state
     ).to(device)
+    print(f"[NextStatePredictor] Number of parameters: {sum(p.numel() for p in next_state_predictor.parameters())}")
 
     # Loss functions
     color_criterion = nn.CrossEntropyLoss()
