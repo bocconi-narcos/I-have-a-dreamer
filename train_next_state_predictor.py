@@ -415,10 +415,15 @@ def train_next_state_predictor():
             "val_selection_loss": val_selection_loss,
             "val_next_state_loss": val_next_state_loss,
             "val_color_acc": val_color_acc,
-            "val_color_class_acc": val_color_class_acc,
             "val_next_state_cosine": val_next_state_cosine,
             "val_total_loss": val_loss_sum
         })
+
+        # Log per-class accuracies separately
+        if val_color_class_acc is not None:
+            for i, acc in enumerate(val_color_class_acc):
+                wandb.log({f"val_color_class_{i}_acc": acc})  # type: ignore
+
         if val_loss_sum < best_val_loss:
             best_val_loss = val_loss_sum
             epochs_no_improve = 0
