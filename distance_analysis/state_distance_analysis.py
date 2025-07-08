@@ -482,7 +482,7 @@ def main():
     # Configuration
     config_path = "../config.yaml"
     checkpoint_path = "../best_model_next_state_predictor.pth"
-    buffer_path = "data/buffer_500.pt"
+    buffer_path = "../data/buffer_500.pt"
     max_samples = 10000  # Limit samples for faster analysis, set to None for all
     
     print("Starting Multi-Metric State Distance Analysis...")
