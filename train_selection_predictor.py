@@ -357,8 +357,6 @@ def train_selection_predictor():
             
             optimizer.zero_grad()
             total_loss.backward()
-            
-            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(
                 list(state_encoder.parameters()) + 
                 list(color_predictor.parameters()) + 
@@ -368,7 +366,6 @@ def train_selection_predictor():
                 list(selection_embedder.parameters()), 
                 max_norm=1.0
             )
-            
             optimizer.step()
 
             # Log gradients to wandb
