@@ -8,6 +8,7 @@
 
 import os
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -65,13 +66,14 @@ def load_state_encoder_from_checkpoint(checkpoint_path, config):
     return encoder
 
 CONFIG_PATH = "config.yaml"
-CHECKPOINT_PATH = "best_model_next_state_predictor.pth"
-BUFFER_PATH = "data/buffer_500.pt"
+CHECKPOINT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'weights', 'best_model_next_state_predictor.pth'))
+BUFFER_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'buffer_500.pt'))
 
 # Load config, encoder, and dataset
 def main():
     print("Loading config...")
-    config = load_config(CONFIG_PATH)
+    config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.yaml'))
+    config = load_config(config_path)
     print("Loading state encoder from checkpoint...")
     encoder = load_state_encoder_from_checkpoint(CHECKPOINT_PATH, config)
     encoder.eval()
