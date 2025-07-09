@@ -107,14 +107,17 @@ def main():
     print(f"Loaded dataset with {len(dataset)} samples")
 
     # ---- Step 2: Encode a batch of states and collect features ----
-    N = 1000  # Number of states to sample for analysis (adjust as needed)
-    print(f"Encoding {N} states...")
+    N = 5000  # Number of states to sample for analysis (adjust as needed)
+    print(f"Randomly selecting {N} unique states from the dataset...")
+    total_samples = len(dataset)
+    np.random.seed(42)  # For reproducibility
+    selected_indices = np.random.permutation(total_samples)[:N]
     features = []
     meta = []
     encoder.eval()
     with torch.no_grad():
-        for i in range(N):
-            sample = dataset[i]
+        for idx in selected_indices:
+            sample = dataset[idx]
             state = sample['state'].unsqueeze(0).to(device)
             shape_h = sample['shape_h'].unsqueeze(0).to(device)
             shape_w = sample['shape_w'].unsqueeze(0).to(device)
@@ -138,8 +141,8 @@ def main():
                 'most_present_color': most_present_color.item(),
                 'least_present_color': least_present_color.item()
             })
-            if (i+1) % 200 == 0:
-                print(f"Encoded {i+1}/{N} states...")
+            if (len(features)) % 200 == 0:
+                print(f"Encoded {len(features)}/{N} states...")
     features = np.stack(features, axis=0)  # Shape: (N, latent_dim)
     print(f"Feature matrix shape: {features.shape}")
 
