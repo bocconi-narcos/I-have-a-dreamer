@@ -31,7 +31,7 @@ def one_hot(indices, num_classes):
 # --- Validation Metrics ---
 def evaluate_selection_and_color(selection_predictor, color_predictor, state_encoder, mask_encoder, 
                                 colour_selection_embedder, selection_embedder,
-                                dataloader, device, criterion, num_color_selection_fns, num_selection_fns, vicreg_loss_fn):
+                                dataloader, device, criterion, num_color_selection_fns, num_selection_fns, vicreg_loss_fn, mse_loss_fn, use_vicreg):
     selection_predictor.eval()
     color_predictor.eval()
     state_encoder.eval()
@@ -86,8 +86,14 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
             pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.long())
             
-            # Use VICReg loss for selection mask prediction (replacing MSE)
-            selection_loss, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+            # Use VICReg or MSE loss for selection mask prediction
+            if use_vicreg:
+                selection_loss, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+            else:
+                selection_loss = mse_loss_fn(pred_latent_mask, target_latent_mask)
+                sim_loss = torch.tensor(0.0)
+                std_loss = torch.tensor(0.0)
+                cov_loss = torch.tensor(0.0)
             
             total_selection_loss += selection_loss.item() * state.size(0)
             total_color_loss += color_loss.item() * state.size(0)
@@ -157,7 +163,7 @@ def train_selection_predictor():
 
     # VICReg parameters
     selection_cfg = config['selection_mask']
-    use_vicreg = selection_cfg['use_vicreg']
+    use_vicreg = selection_cfg.get('use_vicreg', True)
     vicreg_sim_coeff = selection_cfg['vicreg_sim_coeff']
     vicreg_std_coeff = selection_cfg['vicreg_std_coeff']
     vicreg_cov_coeff = selection_cfg['vicreg_cov_coeff']
@@ -251,6 +257,7 @@ def train_selection_predictor():
     
     color_criterion = nn.CrossEntropyLoss()
     vicreg_loss_fn = VICRegLoss(sim_coeff=vicreg_sim_coeff, std_coeff=vicreg_std_coeff, cov_coeff=vicreg_cov_coeff)
+    mse_loss_fn = nn.MSELoss()
     
     # Optimize all modules together - now including both embedders
     optimizer = optim.AdamW(
@@ -336,8 +343,14 @@ def train_selection_predictor():
             pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.long())
             
-            # Use VICReg loss for selection mask prediction (replacing MSE)
-            selection_loss, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+            # Use VICReg or MSE loss for selection mask prediction
+            if use_vicreg:
+                selection_loss, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+            else:
+                selection_loss = mse_loss_fn(pred_latent_mask, target_latent_mask)
+                sim_loss = torch.tensor(0.0)
+                std_loss = torch.tensor(0.0)
+                cov_loss = torch.tensor(0.0)
             
             # Combined loss
             total_loss = color_loss + selection_loss
@@ -386,14 +399,15 @@ def train_selection_predictor():
         avg_selection_loss, avg_color_loss, color_accuracy, avg_val_sim_loss, avg_val_std_loss, avg_val_cov_loss = evaluate_selection_and_color(
             selection_mask_predictor, color_predictor, state_encoder, mask_encoder, 
             colour_selection_embedder, selection_embedder,
-            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, vicreg_loss_fn)
+            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, vicreg_loss_fn, mse_loss_fn, use_vicreg)
         
         # Calculate average training losses
-        avg_train_selection_loss = total_selection_loss / len(train_loader.dataset)
-        avg_train_color_loss = total_color_loss / len(train_loader.dataset)
-        avg_train_sim_loss = total_sim_loss / len(train_loader.dataset)
-        avg_train_std_loss = total_std_loss / len(train_loader.dataset)
-        avg_train_cov_loss = total_cov_loss / len(train_loader.dataset)
+        num_train_samples = sum(batch['state'].size(0) for batch in train_loader)
+        avg_train_selection_loss = total_selection_loss / num_train_samples
+        avg_train_color_loss = total_color_loss / num_train_samples
+        avg_train_sim_loss = total_sim_loss / num_train_samples
+        avg_train_std_loss = total_std_loss / num_train_samples
+        avg_train_cov_loss = total_cov_loss / num_train_samples
         
         # Log to wandb
         if WANDB_AVAILABLE:
