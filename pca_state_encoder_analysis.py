@@ -1,15 +1,5 @@
 # PCA and Variance Analysis for State Encoder Features
-# =====================================================
-#
-# Checklist:
-# 1. Encode a batch of states using the state encoder
-# 2. Arrange encoded features in a matrix (samples x features)
-# 3. Apply PCA and other dimensionality reduction (e.g., t-SNE, UMAP)
-# 4. Plot PCA (2D/3D) and other projections
-# 5. Analyze explained variance (per component, cumulative)
-# 6. Analyze total variance, variance per feature, and covariance between features
-#
-# Timeline:
+
 # - Step 1: Load config, model, and data buffer
 # - Step 2: Encode a batch of states, collect features
 # - Step 3: Arrange features in a matrix and transpose as needed
@@ -18,7 +8,6 @@
 # - Step 6: Compute and analyze total variance, per-feature variance, and covariance matrix
 # - Step 7: Summarize findings
 
-# Implementation will proceed step by step below... 
 
 import os
 import sys
