@@ -16,6 +16,7 @@ import yaml
 import numpy as np
 from torch.utils.data import DataLoader, random_split
 import matplotlib.pyplot as plt
+import wandb
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
 
 from src.models.state_encoder import StateEncoder
 from train_step_distance_encoder import StepDistanceDataset
+from src.models.predictors.reward_predictor import RewardPredictor
 
 class DistanceMLP(nn.Module):
     def __init__(self, input_dim, hidden_dim=128, dropout_p=0.2):
@@ -166,34 +168,68 @@ def main():
     mlp = DistanceMLP(input_dim=latent_dim, dropout_p=0.2).to(device)
     print(f"[DistanceMLP] Number of parameters: {sum(p.numel() for p in mlp.parameters())}")
 
+    reward_predictor = RewardPredictor(
+        latent_dim=latent_dim,
+        hidden_dim=config['reward_predictor'].get('hidden_dim', 128),
+        transformer_depth=config['reward_predictor'].get('transformer_depth', 2),
+        transformer_heads=config['reward_predictor'].get('transformer_heads', 2),
+        transformer_dim_head=config['reward_predictor'].get('transformer_dim_head', 64),
+        transformer_mlp_dim=config['reward_predictor'].get('transformer_mlp_dim', 128),
+        dropout=config['reward_predictor'].get('transformer_dropout', 0.1),
+        proj_dim=config['reward_predictor'].get('proj_dim', None)
+    ).to(device)
+
     # ---- Step 4: Train the MLP to predict distance ----
     num_epochs = 20
     criterion = nn.MSELoss()
-    optimizer = optim.AdamW(mlp.parameters(), lr=1e-3)
+    optimizer = optim.AdamW(
+        list(mlp.parameters()) + 
+        list(reward_predictor.parameters()), 
+        lr=1e-3
+    )
     best_val_loss = float('inf')
     for epoch in range(num_epochs):
         mlp.train()
         train_loss = 0
-        for batch in train_loader:
+        total_reward_loss = 0
+        for i, batch in enumerate(train_loader):
             latent, latent_target, true_distance = encode_batch(batch, encoder, device)
             pred_distance = mlp(latent, latent_target)
+            reward = batch['reward'].to(device)
+            pred_reward = reward_predictor(latent, latent_target)
+            reward_loss = nn.MSELoss()(pred_reward.squeeze(-1), reward.float())
             loss = criterion(pred_distance, true_distance.float())
+            total_loss = loss + reward_loss
             optimizer.zero_grad()
-            loss.backward()
+            total_loss.backward()
             optimizer.step()
             train_loss += loss.item() * latent.size(0)
+            total_reward_loss += reward_loss.item() * latent.size(0)
+            wandb.log({
+                "batch_color_loss": loss.item(),
+                "batch_reward_loss": reward_loss.item(),
+                "batch_total_loss": total_loss.item(),
+                "epoch": epoch + 1,
+                "batch": i + 1
+            })
         train_loss /= len(train_loader.dataset)
         # Validation
         mlp.eval()
         val_loss = 0
+        total_reward_loss = 0
         preds = []
         trues = []
         with torch.no_grad():
             for batch in val_loader:
                 latent, latent_target, true_distance = encode_batch(batch, encoder, device)
                 pred_distance = mlp(latent, latent_target)
+                reward = batch['reward'].to(device)
+                pred_reward = reward_predictor(latent, latent_target)
+                reward_loss = nn.MSELoss()(pred_reward.squeeze(-1), reward.float())
                 loss = criterion(pred_distance, true_distance.float())
+                total_loss = loss + reward_loss
                 val_loss += loss.item() * latent.size(0)
+                total_reward_loss += reward_loss.item() * latent.size(0)
                 preds.append(pred_distance.cpu().numpy())
                 trues.append(true_distance.cpu().numpy())
         val_loss /= len(val_loader.dataset)
@@ -201,7 +237,17 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             # Save the full model (not just state_dict)
-            torch.save(mlp, 'best_distance_mlp_full.pth')
+            torch.save({
+                'state_encoder': encoder.state_dict(),
+                'color_predictor': mlp.state_dict(),
+                'mask_encoder': reward_predictor.state_dict(),
+                'selection_mask_predictor': None,
+                'next_state_predictor': None,
+                'reward_predictor': reward_predictor.state_dict(),
+                'colour_selection_embedder': None,
+                'selection_embedder': None,
+                'target_encoder': None
+            }, 'best_distance_mlp_full.pth')
             print("  New best model saved (full model).")
     # ---- Step 5: Evaluate and report results ----
     preds = np.concatenate(preds)
@@ -216,6 +262,7 @@ def main():
     plt.savefig('distance_regression_scatter.png', dpi=200)
     plt.show()
     print("Final best validation loss:", best_val_loss)
+    print("Final total reward loss:", total_reward_loss)
 
 if __name__ == "__main__":
     main() 
