@@ -11,11 +11,13 @@ from src.models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder_new import MaskEncoder
 from src.models.predictors.selection_mask_predictor import SelectionMaskPredictor
 from src.models.predictors.next_state_predictor import NextStatePredictor
+from src.models.predictors.reward_predictor import RewardPredictor
 from src.losses.vicreg import VICRegLoss  # Not used, but kept for reference
 from src.data import ReplayBufferDataset
 from src.models.action_embed import ActionEmbedder
 from tqdm import tqdm
 import torch.nn.functional as F  # type: ignore
+import torch.nn.utils
 
 # --- EMA Utility ---
 def update_ema(target_model, source_model, decay=0.995):
@@ -92,12 +94,13 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             color_preds = torch.argmax(color_logits, dim=1)
             color_correct += (color_preds == target_colour).sum().item()
             # Per-class accuracy
-            if color_class_correct is None:
+            if color_logits is not None and color_class_correct is None:
                 color_class_correct = torch.zeros(color_logits.shape[1], device=device)
                 color_class_total = torch.zeros(color_logits.shape[1], device=device)
-            for c in range(color_logits.shape[1]):
-                color_class_correct[c] += ((color_preds == c) & (target_colour == c)).sum().item()
-                color_class_total[c] += (target_colour == c).sum().item()
+            if color_logits is not None and color_class_correct is not None and color_class_total is not None:
+                for c in range(color_logits.shape[1]):
+                    color_class_correct[c] += ((color_preds == c) & (target_colour == c)).sum().item()
+                    color_class_total[c] += (target_colour == c).sum().item()
 
             # Selection mask prediction - now using embedded selection actions
             action_selection_embedding = selection_embedder(action_selection_onehot)
@@ -306,12 +309,26 @@ def train_next_state_predictor():
     ).to(device)
     print(f"[NextStatePredictor] Number of parameters: {sum(p.numel() for p in next_state_predictor.parameters())}")
 
+    # Reward Predictor initialization
+    reward_predictor = RewardPredictor(
+        latent_dim=latent_dim,
+        hidden_dim=config['reward_predictor'].get('hidden_dim', 128),
+        transformer_depth=config['reward_predictor'].get('transformer_depth', 2),
+        transformer_heads=config['reward_predictor'].get('transformer_heads', 2),
+        transformer_dim_head=config['reward_predictor'].get('transformer_dim_head', 64),
+        transformer_mlp_dim=config['reward_predictor'].get('transformer_mlp_dim', 128),
+        dropout=config['reward_predictor'].get('transformer_dropout', 0.1),
+        proj_dim=config['reward_predictor'].get('proj_dim', None)
+    ).to(device)
+    print(f"[RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
+
     # Loss functions
     color_criterion = nn.CrossEntropyLoss()
     vicreg_loss_fn_selection = VICRegLoss(sim_coeff=vicreg_sim_coeff_selection, std_coeff=vicreg_std_coeff_selection, cov_coeff=vicreg_cov_coeff_selection)
     vicreg_loss_fn_next_state = VICRegLoss(sim_coeff=vicreg_sim_coeff_next_state, std_coeff=vicreg_std_coeff_next_state, cov_coeff=vicreg_cov_coeff_next_state)
     selection_criterion = nn.MSELoss()
     next_state_criterion = nn.MSELoss()
+    reward_criterion = nn.MSELoss()
     
     # Optimize all modules together - now including both embedders
     optimizer = optim.AdamW(
@@ -320,6 +337,7 @@ def train_next_state_predictor():
         list(mask_encoder.parameters()) + 
         list(selection_mask_predictor.parameters()) + 
         list(next_state_predictor.parameters()) +
+        list(reward_predictor.parameters()) +
         list(colour_selection_embedder.parameters()) +
         list(selection_embedder.parameters()), 
         lr=learning_rate
@@ -335,9 +353,11 @@ def train_next_state_predictor():
         mask_encoder.train()
         selection_mask_predictor.train()
         next_state_predictor.train()
+        reward_predictor.train()
         total_color_loss = 0
         total_selection_loss = 0
         total_next_state_loss = 0
+        total_reward_loss = 0
         for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
             state = batch['state'].to(device)
             next_state = batch['next_state'].to(device)
@@ -346,6 +366,7 @@ def train_next_state_predictor():
             action_transform = batch['action_transform'].to(device)
             target_colour = batch['colour'].to(device)
             selection_mask = batch['selection_mask'].to(device)
+            reward = batch['reward'].to(device)
             shape_h = batch.get('shape_h', None)
             shape_w = batch.get('shape_w', None)
             num_colors_grid = batch.get('num_colors_grid', None)
@@ -390,11 +411,24 @@ def train_next_state_predictor():
             else:
                 next_state_loss = next_state_criterion(pred_next_latent, latent_next)
 
+            # Reward prediction
+            pred_reward = reward_predictor(latent, pred_next_latent)
+            reward_loss = reward_criterion(pred_reward.squeeze(-1), reward.float())
+
             # Combined loss
-            total_loss = color_loss + selection_loss + next_state_loss
+            total_loss = color_loss + selection_loss + next_state_loss + reward_loss
 
             optimizer.zero_grad()
             total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(state_encoder.parameters()) + 
+                list(color_predictor.parameters()) + 
+                list(mask_encoder.parameters()) + 
+                list(selection_mask_predictor.parameters()) +
+                list(colour_selection_embedder.parameters()) +
+                list(selection_embedder.parameters()), 
+                max_norm=1.0
+            )
             optimizer.step()
 
             # EMA update for target encoder
@@ -403,22 +437,24 @@ def train_next_state_predictor():
             total_color_loss += color_loss.item() * state.size(0)
             total_selection_loss += selection_loss.item() * state.size(0)
             total_next_state_loss += next_state_loss.item() * state.size(0)
+            total_reward_loss += reward_loss.item() * state.size(0)
 
             if (i + 1) % log_interval == 0:
-            #     print(f"Epoch {epoch+1} Batch {i+1}/{len(train_loader)} - Color: {color_loss.item():.4f} | Selection: {selection_loss.item():.4f} | Next State: {next_state_loss.item():.4f}")
-                # --- WANDB LOGGING FOR BATCH ---
                 wandb.log({  # type: ignore
                     "batch_color_loss": color_loss.item(),
                     "batch_selection_loss": selection_loss.item(),
                     "batch_next_state_loss": next_state_loss.item(),
+                    "batch_reward_loss": reward_loss.item(),
                     "batch_total_loss": total_loss.item(),
                     "epoch": epoch + 1,
                     "batch": i + 1
                 })
 
-        avg_color_loss = total_color_loss / len(train_loader.dataset)
-        avg_selection_loss = total_selection_loss / len(train_loader.dataset)
-        avg_next_state_loss = total_next_state_loss / len(train_loader.dataset)
+        num_train_samples = sum(batch['state'].size(0) for batch in train_loader)
+        avg_color_loss = total_color_loss / num_train_samples
+        avg_selection_loss = total_selection_loss / num_train_samples
+        avg_next_state_loss = total_next_state_loss / num_train_samples
+        avg_reward_loss = total_reward_loss / num_train_samples
 
         val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine = evaluate_all_modules(
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
@@ -428,13 +464,14 @@ def train_next_state_predictor():
         )
 
         val_loss_sum = val_color_loss + val_selection_loss + val_next_state_loss
-        print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Color Acc: {val_color_acc:.4f}")
+        print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Train Reward Loss: {avg_reward_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Color Acc: {val_color_acc:.4f}")
         # --- WANDB LOGGING FOR EPOCH ---
         wandb.log({  # type: ignore
             "epoch": epoch + 1,
             "train_color_loss": avg_color_loss,
             "train_selection_loss": avg_selection_loss,
             "train_next_state_loss": avg_next_state_loss,
+            "train_reward_loss": avg_reward_loss,
             "val_color_loss": val_color_loss,
             "val_selection_loss": val_selection_loss,
             "val_next_state_loss": val_next_state_loss,
@@ -457,6 +494,7 @@ def train_next_state_predictor():
                 'mask_encoder': mask_encoder.state_dict(),
                 'selection_mask_predictor': selection_mask_predictor.state_dict(),
                 'next_state_predictor': next_state_predictor.state_dict(),
+                'reward_predictor': reward_predictor.state_dict(),
                 'colour_selection_embedder': colour_selection_embedder.state_dict(),
                 'selection_embedder': selection_embedder.state_dict(),
                 'target_encoder': target_encoder.state_dict()
