@@ -175,9 +175,14 @@ def main():
     plt.title('t-SNE (2D)')
     plt.xlabel('Dim 1')
     plt.ylabel('Dim 2')
+    plt.subplot(1, 3, 3)
     if features_umap is not None:
-        plt.subplot(1, 3, 3)
         plt.scatter(features_umap[:, 0], features_umap[:, 1], s=10, alpha=0.7)
+        plt.title('UMAP (2D)')
+        plt.xlabel('Dim 1')
+        plt.ylabel('Dim 2')
+    else:
+        plt.text(0.5, 0.5, 'UMAP not installed', ha='center', va='center', fontsize=14)
         plt.title('UMAP (2D)')
         plt.xlabel('Dim 1')
         plt.ylabel('Dim 2')
