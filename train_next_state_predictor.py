@@ -35,7 +35,8 @@ def one_hot(indices, num_classes):
 # --- Validation Metrics ---
 def evaluate_all_modules(color_predictor, selection_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder, 
                         colour_selection_embedder, selection_embedder,
-                        dataloader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions):
+                        dataloader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
+                        use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion):
     color_predictor.eval()
     selection_predictor.eval()
     next_state_predictor.eval()
@@ -47,8 +48,6 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
     total_next_state_loss = 0
     color_correct = 0
     total = 0
-    selection_criterion = nn.MSELoss()
-    next_state_criterion = nn.MSELoss()
     # For per-class accuracy
     color_class_correct = None
     color_class_total = None
@@ -104,11 +103,17 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             action_selection_embedding = selection_embedder(action_selection_onehot)
             pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.to(torch.long))
-            selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
+            if use_vicreg_selection:
+                selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
+            else:
+                selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
 
             # Next state prediction - pass pred_latent_mask as final latent selection
             pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
-            next_state_loss = next_state_criterion(pred_next_latent, latent_next)
+            if use_vicreg_next_state:
+                next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
+            else:
+                next_state_loss = next_state_criterion(pred_next_latent, latent_next)
             # Cosine similarity for next state prediction
             pred_next_latent_norm = F.normalize(pred_next_latent, p=2, dim=-1)
             latent_next_norm = F.normalize(latent_next, p=2, dim=-1)
@@ -176,6 +181,10 @@ def train_next_state_predictor():
     transformer_dim_head_selection = mask_predictor_params['transformer_dim_head']
     transformer_mlp_dim_selection = mask_predictor_params['transformer_mlp_dim']
     transformer_dropout_selection = mask_predictor_params['transformer_dropout']
+    use_vicreg_selection = selection_cfg.get('use_vicreg', False)
+    vicreg_sim_coeff_selection = selection_cfg.get('vicreg_sim_coeff', 1.0)
+    vicreg_std_coeff_selection = selection_cfg.get('vicreg_std_coeff', 1.0)
+    vicreg_cov_coeff_selection = selection_cfg.get('vicreg_cov_coeff', 1.0)
     
     # Next state config
     next_state_cfg = config['next_state']
@@ -185,6 +194,10 @@ def train_next_state_predictor():
     transformer_dim_head_next_state = next_state_cfg['transformer_dim_head']
     transformer_mlp_dim_next_state = next_state_cfg['transformer_mlp_dim']
     transformer_dropout_next_state = next_state_cfg['transformer_dropout']
+    use_vicreg_next_state = next_state_cfg.get('use_vicreg', False)
+    vicreg_sim_coeff_next_state = next_state_cfg.get('vicreg_sim_coeff', 1.0)
+    vicreg_std_coeff_next_state = next_state_cfg.get('vicreg_std_coeff', 1.0)
+    vicreg_cov_coeff_next_state = next_state_cfg.get('vicreg_cov_coeff', 1.0)
     
     batch_size = config['batch_size']
     num_epochs = config['num_epochs']
@@ -295,6 +308,8 @@ def train_next_state_predictor():
 
     # Loss functions
     color_criterion = nn.CrossEntropyLoss()
+    vicreg_loss_fn_selection = VICRegLoss(sim_coeff=vicreg_sim_coeff_selection, std_coeff=vicreg_std_coeff_selection, cov_coeff=vicreg_cov_coeff_selection)
+    vicreg_loss_fn_next_state = VICRegLoss(sim_coeff=vicreg_sim_coeff_next_state, std_coeff=vicreg_std_coeff_next_state, cov_coeff=vicreg_cov_coeff_next_state)
     selection_criterion = nn.MSELoss()
     next_state_criterion = nn.MSELoss()
     
@@ -363,11 +378,17 @@ def train_next_state_predictor():
             action_selection_embedding = selection_embedder(action_selection_onehot)
             pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
             target_latent_mask = mask_encoder(selection_mask.to(torch.long))
-            selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
+            if use_vicreg_selection:
+                selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
+            else:
+                selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
 
             # Next state prediction - pass pred_latent_mask as final latent selection
             pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
-            next_state_loss = next_state_criterion(pred_next_latent, latent_next)
+            if use_vicreg_next_state:
+                next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
+            else:
+                next_state_loss = next_state_criterion(pred_next_latent, latent_next)
 
             # Combined loss
             total_loss = color_loss + selection_loss + next_state_loss
@@ -402,7 +423,8 @@ def train_next_state_predictor():
         val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine = evaluate_all_modules(
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
             colour_selection_embedder, selection_embedder,
-            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions
+            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
+            use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion
         )
 
         val_loss_sum = val_color_loss + val_selection_loss + val_next_state_loss
