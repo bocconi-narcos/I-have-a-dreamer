@@ -247,13 +247,35 @@ def train_next_state_predictor():
     wandb_config = config.copy()
     wandb.init(project="next-state-predictor", config=wandb_config)  # type: ignore
 
-    # Initialize all models
+    # --- Load pretrained encoder if specified ---
+    use_pretrained_encoder = config.get('use_pretrained_encoder', False)
+    pretrained_encoder_path = config.get('pretrained_encoder_path', 'best_model_autoencoder.pth')
+    freeze_pretrained_encoder = config.get('freeze_pretrained_encoder', False)
+
     state_encoder = StateEncoder(
         image_size=image_size,
         input_channels=input_channels,
         latent_dim=latent_dim,
         encoder_params=encoder_params
     ).to(device)
+
+    if use_pretrained_encoder:
+        if os.path.exists(pretrained_encoder_path):
+            print(f"Loading pretrained encoder from {pretrained_encoder_path}")
+            checkpoint = torch.load(pretrained_encoder_path, map_location=device)
+            state_encoder.load_state_dict(checkpoint['state_encoder'])
+            print("Pretrained encoder loaded successfully!")
+            if freeze_pretrained_encoder:
+                for param in state_encoder.parameters():
+                    param.requires_grad = False
+                print("Encoder parameters frozen. Only decoder will be trained.")
+            else:
+                print("Encoder parameters will be fine-tuned.")
+        else:
+            print(f"Warning: Pretrained encoder path {pretrained_encoder_path} not found. Training from scratch.")
+    else:
+        print("Training encoder from scratch.")
+
     # Target encoder (EMA)
     target_encoder = copy.deepcopy(state_encoder)
     target_encoder.eval()
@@ -331,17 +353,29 @@ def train_next_state_predictor():
     reward_criterion = nn.L1Loss()
     
     # Optimize all modules together - now including both embedders
-    optimizer = optim.AdamW(
-        list(state_encoder.parameters()) + 
-        list(color_predictor.parameters()) + 
-        list(mask_encoder.parameters()) + 
-        list(selection_mask_predictor.parameters()) + 
-        list(next_state_predictor.parameters()) +
-        list(reward_predictor.parameters()) +
-        list(colour_selection_embedder.parameters()) +
-        list(selection_embedder.parameters()), 
-        lr=learning_rate
-    )
+    if use_pretrained_encoder and freeze_pretrained_encoder:
+        optimizer = optim.AdamW(
+            list(color_predictor.parameters()) + 
+            list(mask_encoder.parameters()) + 
+            list(selection_mask_predictor.parameters()) + 
+            list(next_state_predictor.parameters()) +
+            list(reward_predictor.parameters()) +
+            list(colour_selection_embedder.parameters()) +
+            list(selection_embedder.parameters()), 
+            lr=learning_rate
+        )
+    else:
+        optimizer = optim.AdamW(
+            list(state_encoder.parameters()) + 
+            list(color_predictor.parameters()) + 
+            list(mask_encoder.parameters()) + 
+            list(selection_mask_predictor.parameters()) + 
+            list(next_state_predictor.parameters()) +
+            list(reward_predictor.parameters()) +
+            list(colour_selection_embedder.parameters()) +
+            list(selection_embedder.parameters()), 
+            lr=learning_rate
+        )
 
     best_val_loss = float('inf')
     epochs_no_improve = 0
