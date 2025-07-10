@@ -174,6 +174,7 @@ def train_next_state_predictor():
     color_selection_dim = config['action_embedders']['action_color_embedder']['embed_dim']
     selection_dim = config['action_embedders']['action_selection_embedder']['embed_dim']
     
+    
     # Selection mask config
     selection_cfg = config['selection_mask']
     mask_encoder_params = selection_cfg['mask_encoder_params']
@@ -393,25 +394,40 @@ def train_next_state_predictor():
         total_next_state_loss = 0
         total_reward_loss = 0
         for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
+            
+            # State
             state = batch['state'].to(device)
+            shape_h = batch.get('shape_h', None).to(device)
+            shape_w = batch.get('shape_w', None).to(device)
+            num_colors_grid = batch.get('num_colors_grid', None).to(device)
+            most_present_color = batch.get('most_present_color', None).to(device)
+            least_present_color = batch.get('least_present_color', None).to(device)
+
+            # Next state
             next_state = batch['next_state'].to(device)
+            shape_h_next = batch.get('shape_h_next', None).to(device)
+            shape_w_next = batch.get('shape_w_next', None).to(device)
+            num_colors_grid_next = batch.get('num_colors_grid_next', None).to(device)
+            most_present_color_next = batch.get('most_present_color_next', None).to(device)
+            least_present_color_next = batch.get('least_present_color_next', None).to(device)
+
+            # Target state
+            target_state = batch['target_state'].to(device)
+            shape_h_target = batch.get('shape_h_target').to(device)
+            shape_w_target = batch.get('shape_w_target').to(device)
+            num_colors_grid_target = batch.get('num_colors_grid_target', None).to(device)
+            most_present_color_target = batch.get('most_present_color_target', None).to(device)
+            least_present_color_target = batch.get('least_present_color_target', None).to(device)
+
+            # Actions
             action_colour = batch['action_colour'].to(device)
             action_selection = batch['action_selection'].to(device)
             action_transform = batch['action_transform'].to(device)
-            target_colour = batch['colour'].to(device)
-            target_state = batch['target_state'].to(device)
+            
+            # Outputs of actions
+            selected_color = batch['colour'].to(device)
             selection_mask = batch['selection_mask'].to(device)
             reward = batch['reward'].to(device).to(device)
-            shape_h = batch.get('shape_h', None).to(device)
-            shape_h_target = batch.get('shape_h_target').to(device)
-            shape_w = batch.get('shape_w', None).to(device)
-            shape_w_target = batch.get('shape_w_target').to(device)
-            num_colors_grid = batch.get('num_colors_grid', None).to(device)
-            num_colors_grid_target = batch.get('num_colors_grid_target', None).to(device)
-            most_present_color = batch.get('most_present_color', None).to(device)
-            most_present_color_target = batch.get('most_present_color_target', None).to(device)
-            least_present_color = batch.get('least_present_color', None).to(device)
-            least_present_color_target = batch.get('least_present_color_target', None).to(device)
 
             if state.dim() == 3:
                 state = state.unsqueeze(1)
@@ -421,7 +437,7 @@ def train_next_state_predictor():
             # Encode state and next_state
             if shape_h is not None:
                 latent = state_encoder(state.to(torch.long), shape_h=shape_h.to(device), shape_w=shape_w.to(device), num_unique_colors=num_colors_grid.to(device), most_common_color=most_present_color.to(device), least_common_color=least_present_color.to(device))
-                latent_next = target_encoder(next_state.to(torch.long), shape_h=shape_h.to(device), shape_w=shape_w.to(device), num_unique_colors=num_colors_grid.to(device), most_common_color=most_present_color.to(device), least_common_color=least_present_color.to(device))
+                latent_next = target_encoder(next_state.to(torch.long), shape_h=shape_h_next, shape_w=shape_w_next, num_unique_colors=num_colors_grid_next, most_common_color=most_present_color_next, least_common_color=least_present_color_next)
             else:
                 latent = state_encoder(state.to(torch.long))
                 latent_next = target_encoder(next_state.to(torch.long))
@@ -433,7 +449,7 @@ def train_next_state_predictor():
             # Color prediction - using embedded actions
             action_color_embedding = colour_selection_embedder(action_colour_onehot)
             color_logits = color_predictor(latent, action_color_embedding)
-            color_loss = color_criterion(color_logits, target_colour)
+            color_loss = color_criterion(color_logits, selected_color)
 
             # Selection mask prediction - now using embedded selection actions
             action_selection_embedding = selection_embedder(action_selection_onehot)
