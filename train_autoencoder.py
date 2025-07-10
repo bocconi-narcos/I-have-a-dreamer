@@ -127,6 +127,11 @@ def train_autoencoder():
     else:
         device = torch.device("cpu")
 
+    # --- Load pretrained encoder if specified ---
+    use_pretrained_encoder = config.get('use_pretrained_encoder', False)
+    pretrained_encoder_path = config.get('pretrained_encoder_path', 'best_model_autoencoder.pth')
+    freeze_pretrained_encoder = config.get('freeze_pretrained_encoder', False)
+
     state_encoder = StateEncoder(
         image_size=image_size,
         input_channels=input_channels,
@@ -134,27 +139,50 @@ def train_autoencoder():
         encoder_params=encoder_params
     ).to(device)
 
+    if use_pretrained_encoder:
+        if os.path.exists(pretrained_encoder_path):
+            print(f"Loading pretrained encoder from {pretrained_encoder_path}")
+            checkpoint = torch.load(pretrained_encoder_path, map_location=device)
+            state_encoder.load_state_dict(checkpoint['state_encoder'])
+            print("Pretrained encoder loaded successfully!")
+            if freeze_pretrained_encoder:
+                for param in state_encoder.parameters():
+                    param.requires_grad = False
+                print("Encoder parameters frozen. Only decoder will be trained.")
+            else:
+                print("Encoder parameters will be fine-tuned.")
+        else:
+            print(f"Warning: Pretrained encoder path {pretrained_encoder_path} not found. Training from scratch.")
+    else:
+        print("Training encoder from scratch.")
+
     state_decoder = StateDecoder(
         image_size=image_size,
         latent_dim=latent_dim,
         decoder_params=decoder_params
     ).to(device)
 
-    optimizer = optim.AdamW(
-        list(state_encoder.parameters()) + list(state_decoder.parameters()),
-        lr=learning_rate
-    )
+    # Only include trainable parameters in the optimizer
+    if use_pretrained_encoder and freeze_pretrained_encoder:
+        optimizer = optim.AdamW(list(state_decoder.parameters()), lr=learning_rate)
+    else:
+        optimizer = optim.AdamW(list(state_encoder.parameters()) + list(state_decoder.parameters()), lr=learning_rate)
 
     best_val_loss = float('inf')
     epochs_no_improve = 0
     patience = 50
-    save_path = 'best_model_autoencoder.pth'
+    save_path = 'best_model_next_state_predictor.pth'
+    # --- WANDB LOGIN ---
+    wandb.login()
     wandb.init(project="autoencoder", config=config)
 
     for epoch in range(num_epochs):
         state_encoder.train()
         state_decoder.train()
         total_loss = 0
+        total_grid_loss = 0
+        total_shape_loss = 0
+        total_color_stats_loss = 0
         for i, batch in enumerate(train_loader):
             state = batch['state'].to(device)
             shape_w = batch['shape_w'].to(device)
@@ -173,7 +201,7 @@ def train_autoencoder():
             )
             decoder_output = state_decoder(latent)
 
-            loss, _ = autoencoder_loss(
+            loss, loss_dict = autoencoder_loss(
                 decoder_output, state, shape_h, shape_w, most_present_color, least_present_color, num_colors_grid
             )
 
@@ -186,15 +214,24 @@ def train_autoencoder():
             optimizer.step()
 
             total_loss += loss.item() * state.size(0)
+            total_grid_loss += loss_dict['grid_loss'] * state.size(0)
+            total_shape_loss += loss_dict['shape_loss'] * state.size(0)
+            total_color_stats_loss += loss_dict['color_stats_loss'] * state.size(0)
 
             if (i + 1) % log_interval == 0:
                 print(f"\rEpoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}", end='', flush=True)
 
-        avg_loss = total_loss / len(train_loader.dataset)
+        avg_loss = total_loss / len(train_dataset)
+        avg_grid_loss = total_grid_loss / len(train_dataset)
+        avg_shape_loss = total_shape_loss / len(train_dataset)
+        avg_color_stats_loss = total_color_stats_loss / len(train_dataset)
         val_loss, val_loss_dict = evaluate(state_encoder, state_decoder, val_loader, device)
         print(f"\rEpoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f}", end='', flush=True)
         wandb.log({
             "train_loss": avg_loss,
+            "train_grid_loss": avg_grid_loss,
+            "train_shape_loss": avg_shape_loss,
+            "train_color_stats_loss": avg_color_stats_loss,
             "val_loss": val_loss,
             "val_grid_loss": val_loss_dict['grid_loss'],
             "val_shape_loss": val_loss_dict['shape_loss'],
