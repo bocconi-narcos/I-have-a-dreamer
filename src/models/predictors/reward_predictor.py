@@ -31,7 +31,7 @@ class RewardPredictor(nn.Module):
         else:
             self.proj = nn.Identity()
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.proj_dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, 3, self.proj_dim))  # 3 = CLS + 2 latents
+        self.pos_embed = nn.Parameter(torch.zeros(1, 4, self.proj_dim))  # 4 = CLS + 3 latents
         self.transformer = Transformer(
             dim=self.proj_dim,
             depth=transformer_depth,
@@ -48,15 +48,16 @@ class RewardPredictor(nn.Module):
         nn.init.normal_(self.cls_token, std=0.02)
         nn.init.normal_(self.pos_embed, std=0.02)
 
-    def forward(self, z_t, z_tp1):
+    def forward(self, z_t, z_tp1, z_target):
         # z_t, z_tp1: (B, D)
         z_t = self.proj(z_t)
         z_tp1 = self.proj(z_tp1)
-        x = torch.stack([z_t, z_tp1], dim=1)  # (B, 2, D)
+        z_target = self.proj(z_target)
+        x = torch.stack([z_t, z_tp1, z_target], dim=1)  # (B, 3, D)
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1)  # (B, 1, D)
-        x = torch.cat([cls_tokens, x], dim=1)  # (B, 3, D)
-        x = x + self.pos_embed  # (B, 3, D)
-        x = self.transformer(x)  # (B, 3, D)
+        x = torch.cat([cls_tokens, x], dim=1)  # (B, 4, D)
+        x = x + self.pos_embed  # (B, 4, D)
+        x = self.transformer(x)  # (B, 4, D)
         cls_out = x[:, 0]  # (B, D)
         reward = self.mlp_head(cls_out)  # (B, 1)
         return reward 

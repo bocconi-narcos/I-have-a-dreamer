@@ -59,6 +59,7 @@ class ReplayBufferDataset(Dataset):
                             },
                             'selection_mask': buffer_dict['selection_mask'][i],
                             'next_state': buffer_dict['next_state'][i],
+                            'target_state': buffer_dict['target_state'][i],
                             'colour': buffer_dict['colour'][i],
                             'reward': buffer_dict['reward'][i],
                             'done': buffer_dict['done'][i],
@@ -181,9 +182,12 @@ class ReplayBufferDataset(Dataset):
         if self.mode in ['selection_color', 'end_to_end']:
             next_state = self._to_tensor(transition['next_state'], torch.float32)
             sample['next_state'] = next_state
+            
+        target_state = self._to_tensor(transition['target_state'], torch.long)
         
         # Add transition_type if present
         transition_type = transition.get('transition_type', None)
         sample['transition_type'] = transition_type
+        sample['target_state'] = target_state
         
         return sample 
