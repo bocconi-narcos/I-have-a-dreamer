@@ -401,12 +401,17 @@ def train_next_state_predictor():
             target_colour = batch['colour'].to(device)
             target_state = batch['target_state'].to(device)
             selection_mask = batch['selection_mask'].to(device)
-            reward = batch['reward'].to(device)
-            shape_h = batch.get('shape_h', None)
-            shape_w = batch.get('shape_w', None)
-            num_colors_grid = batch.get('num_colors_grid', None)
-            most_present_color = batch.get('most_present_color', None)
-            least_present_color = batch.get('least_present_color', None)
+            reward = batch['reward'].to(device).to(device)
+            shape_h = batch.get('shape_h', None).to(device)
+            shape_h_target = batch.get('shape_h_target').to(device)
+            shape_w = batch.get('shape_w', None).to(device)
+            shape_w_target = batch.get('shape_w_target').to(device)
+            num_colors_grid = batch.get('num_colors_grid', None).to(device)
+            num_colors_grid_target = batch.get('num_colors_grid_target', None).to(device)
+            most_present_color = batch.get('most_present_color', None).to(device)
+            most_present_color_target = batch.get('most_present_color_target', None).to(device)
+            least_present_color = batch.get('least_present_color', None).to(device)
+            least_present_color_target = batch.get('least_present_color_target', None).to(device)
 
             if state.dim() == 3:
                 state = state.unsqueeze(1)
@@ -446,10 +451,8 @@ def train_next_state_predictor():
             else:
                 next_state_loss = next_state_criterion(pred_next_latent, latent_next)
 
-            
-            # NOTE: USING WRONG INFORMATION
-            # NOTE: MODIFY BUFFER TO ADD: TARGET_SHAPE_H, TARGET_SHAPE_W, TARGET_NUM_UNIQUE_COLORS, TARGET_MOST_COMMON_COLOR, TARGET_LEAST_COMMON_COLOR
-            latent_target = target_encoder(target_state, shape_h=shape_h.to(device), shape_w=shape_w.to(device), num_unique_colors=num_colors_grid.to(device), most_common_color=most_present_color.to(device), least_common_color=least_present_color.to(device))
+        
+            latent_target = target_encoder(target_state, shape_h=shape_h_target, shape_w=shape_w_target, num_unique_colors=num_colors_grid_target, most_common_color=most_present_color_target, least_common_color=least_present_color_target)
 
             # Reward prediction
             pred_reward = reward_predictor(latent, pred_next_latent, latent_target)

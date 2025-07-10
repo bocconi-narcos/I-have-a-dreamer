@@ -68,7 +68,12 @@ class ReplayBufferDataset(Dataset):
                             'shape_w': buffer_dict['shape_w'][i],
                             'num_colors_grid': buffer_dict['num_colors_grid'][i],
                             'most_present_color': buffer_dict['most_present_color'][i],
-                            'least_present_color': buffer_dict['least_present_color'][i]
+                            'least_present_color': buffer_dict['least_present_color'][i],
+                            'num_colors_grid_target': buffer_dict['num_colors_grid_target'][i],
+                            'most_present_color_target': buffer_dict['most_present_color_target'][i],
+                            'least_present_color_target': buffer_dict['least_present_color_target'][i],
+                            'shape_h_target': buffer_dict['shape_h_target'][i],
+                            'shape_w_target': buffer_dict['shape_w_target'][i]
                         }
                         self.buffer.append(transition)
                 else:
@@ -156,10 +161,15 @@ class ReplayBufferDataset(Dataset):
         
         # Extract grid statistics
         shape_h = self._to_tensor(transition['shape_h'], torch.long)
+        shape_h_target = self._to_tensor(transition.get('shape_h_target', transition['shape_h']), torch.long)
         shape_w = self._to_tensor(transition['shape_w'], torch.long)
+        shape_w_target = self._to_tensor(transition.get('shape_w_target', transition['shape_w']), torch.long)
         num_colors_grid = self._to_tensor(transition['num_colors_grid'], torch.long)
+        num_colors_grid_target = self._to_tensor(transition.get('num_colors_grid_target', transition['num_colors_grid']), torch.long)
         most_present_color = self._to_tensor(transition['most_present_color'], torch.long)
+        most_present_color_target = self._to_tensor(transition.get('most_present_color_target', transition['most_present_color']), torch.long)
         least_present_color = self._to_tensor(transition['least_present_color'], torch.long)
+        least_present_color_target = self._to_tensor(transition.get('least_present_color_target', transition['least_present_color']), torch.long)
         
         # Prepare sample based on mode
         sample = {
@@ -172,10 +182,15 @@ class ReplayBufferDataset(Dataset):
             'reward': self._to_tensor(transition['reward'], torch.float32),
             'done': self._to_tensor(float(transition['done']), torch.float32),
             'shape_h': shape_h,
+            'shape_h_target': shape_h_target,
             'shape_w': shape_w,
+            'shape_w_target': shape_w_target,
             'num_colors_grid': num_colors_grid,
             'most_present_color': most_present_color,
             'least_present_color': least_present_color,
+            'num_colors_grid_target': num_colors_grid_target,
+            'most_present_color_target': most_present_color_target,
+            'least_present_color_target': least_present_color_target
         }
         
         # Add next_state for modes that need it
