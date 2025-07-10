@@ -227,6 +227,14 @@ def train_autoencoder():
 
                 if (i + 1) % log_interval == 0:
                     print(f"\rEpoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}", end='', flush=True)
+                    wandb.log({
+                        "batch_loss": loss.item(),
+                        "batch_grid_loss": loss_dict['grid_loss'],
+                        "batch_shape_loss": loss_dict['shape_loss'],
+                        "batch_color_stats_loss": loss_dict['color_stats_loss'],
+                        "epoch": epoch + 1,
+                        "batch": i + 1
+                    })
 
             avg_loss = total_loss / len(train_dataset)
             avg_grid_loss = total_grid_loss / len(train_dataset)
