@@ -328,7 +328,7 @@ def train_next_state_predictor():
     vicreg_loss_fn_next_state = VICRegLoss(sim_coeff=vicreg_sim_coeff_next_state, std_coeff=vicreg_std_coeff_next_state, cov_coeff=vicreg_cov_coeff_next_state)
     selection_criterion = nn.MSELoss()
     next_state_criterion = nn.MSELoss()
-    reward_criterion = nn.MSELoss()
+    reward_criterion = nn.L1Loss()
     
     # Optimize all modules together - now including both embedders
     optimizer = optim.AdamW(
@@ -365,6 +365,7 @@ def train_next_state_predictor():
             action_selection = batch['action_selection'].to(device)
             action_transform = batch['action_transform'].to(device)
             target_colour = batch['colour'].to(device)
+            target_state = batch['target_state'].to(device)
             selection_mask = batch['selection_mask'].to(device)
             reward = batch['reward'].to(device)
             shape_h = batch.get('shape_h', None)
@@ -411,8 +412,13 @@ def train_next_state_predictor():
             else:
                 next_state_loss = next_state_criterion(pred_next_latent, latent_next)
 
+            
+            # NOTE: USING WRONG INFORMATION
+            # NOTE: MODIFY BUFFER TO ADD: TARGET_SHAPE_H, TARGET_SHAPE_W, TARGET_NUM_UNIQUE_COLORS, TARGET_MOST_COMMON_COLOR, TARGET_LEAST_COMMON_COLOR
+            latent_target = target_encoder(target_state, shape_h=shape_h.to(device), shape_w=shape_w.to(device), num_unique_colors=num_colors_grid.to(device), most_common_color=most_present_color.to(device), least_common_color=least_present_color.to(device))
+
             # Reward prediction
-            pred_reward = reward_predictor(latent, pred_next_latent)
+            pred_reward = reward_predictor(latent, pred_next_latent, latent_target)
             reward_loss = reward_criterion(pred_reward.squeeze(-1), reward.float())
 
             # Combined loss
@@ -455,6 +461,7 @@ def train_next_state_predictor():
         avg_selection_loss = total_selection_loss / num_train_samples
         avg_next_state_loss = total_next_state_loss / num_train_samples
         avg_reward_loss = total_reward_loss / num_train_samples
+        avg_total_loss = avg_color_loss + avg_selection_loss + avg_next_state_loss + avg_reward_loss
 
         val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine = evaluate_all_modules(
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
@@ -463,8 +470,44 @@ def train_next_state_predictor():
             use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion
         )
 
-        val_loss_sum = val_color_loss + val_selection_loss + val_next_state_loss
-        print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Train Reward Loss: {avg_reward_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Color Acc: {val_color_acc:.4f}")
+        # --- Compute validation reward loss --- # TO REVIEW IS THIS CORRECT
+        reward_predictor.eval()
+        total_val_reward_loss = 0
+        total_val_samples = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                state = batch['state'].to(device)
+                next_state = batch['next_state'].to(device)
+                target_state = batch['target_state'].to(device)
+                reward = batch['reward'].to(device)
+                shape_h = batch.get('shape_h', None)
+                shape_w = batch.get('shape_w', None)
+                num_colors_grid = batch.get('num_colors_grid', None)
+                most_present_color = batch.get('most_present_color', None)
+                least_present_color = batch.get('least_present_color', None)
+
+                if state.dim() == 3:
+                    state = state.unsqueeze(1)
+                    next_state = next_state.unsqueeze(1)
+
+                # Encode state and next_state
+                if shape_h is not None:
+                    latent = state_encoder(state.to(torch.long), shape_h=shape_h.to(device), shape_w=shape_w.to(device), num_unique_colors=num_colors_grid.to(device), most_common_color=most_present_color.to(device), least_common_color=least_present_color.to(device))
+                    latent_next = target_encoder(next_state.to(torch.long), shape_h=shape_h.to(device), shape_w=shape_w.to(device), num_unique_colors=num_colors_grid.to(device), most_common_color=most_present_color.to(device), least_common_color=least_present_color.to(device))
+                    latent_target = target_encoder(target_state.to(torch.long), shape_h=shape_h.to(device), shape_w=shape_w.to(device), num_unique_colors=num_colors_grid.to(device), most_common_color=most_present_color.to(device), least_common_color=least_present_color.to(device))
+                else:
+                    latent = state_encoder(state.to(torch.long))
+                    latent_next = target_encoder(next_state.to(torch.long))
+                    latent_target = target_encoder(target_state.to(torch.long))
+
+                pred_reward = reward_predictor(latent, latent_next, latent_target)
+                reward_loss = reward_criterion(pred_reward.squeeze(-1), reward.float())
+                total_val_reward_loss += reward_loss.item() * state.size(0)
+                total_val_samples += state.size(0)
+        val_reward_loss = total_val_reward_loss / total_val_samples if total_val_samples > 0 else 0.0
+
+        val_total_loss = val_color_loss + val_selection_loss + val_next_state_loss + val_reward_loss
+        print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Train Reward Loss: {avg_reward_loss:.4f} | Train Total Loss: {avg_total_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Reward Loss: {val_reward_loss:.4f} | Val Color Acc: {val_color_acc:.4f} | Val Total Loss: {val_total_loss:.4f}")
         # --- WANDB LOGGING FOR EPOCH ---
         wandb.log({  # type: ignore
             "epoch": epoch + 1,
@@ -472,12 +515,14 @@ def train_next_state_predictor():
             "train_selection_loss": avg_selection_loss,
             "train_next_state_loss": avg_next_state_loss,
             "train_reward_loss": avg_reward_loss,
+            "train_total_loss": avg_total_loss,
             "val_color_loss": val_color_loss,
             "val_selection_loss": val_selection_loss,
             "val_next_state_loss": val_next_state_loss,
+            "val_reward_loss": val_reward_loss,
             "val_color_acc": val_color_acc,
             "val_next_state_cosine": val_next_state_cosine,
-            "val_total_loss": val_loss_sum
+            "val_total_loss": val_total_loss
         })
 
         # Log per-class accuracies separately
@@ -485,8 +530,8 @@ def train_next_state_predictor():
             for i, acc in enumerate(val_color_class_acc):
                 wandb.log({f"val_color_class_{i}_acc": acc})  # type: ignore
 
-        if val_loss_sum < best_val_loss:
-            best_val_loss = val_loss_sum
+        if val_total_loss < best_val_loss:
+            best_val_loss = val_total_loss
             epochs_no_improve = 0
             torch.save({
                 'state_encoder': state_encoder.state_dict(),
