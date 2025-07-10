@@ -87,6 +87,15 @@ def evaluate(encoder, decoder, dataloader, device):
 
 def train_autoencoder():
     config = load_config()
+    # --- WANDB INIT EARLY ---
+    try:
+        if not wandb.run:
+            wandb.login()
+    except Exception as e:
+        print(f"wandb login failed or already logged in: {e}")
+    # Log all config values to wandb at the very start
+    wandb.init(project="autoencoder", config=config)
+
     buffer_path = config['buffer_path']
     latent_dim = config['latent_dim']
     encoder_params = config['encoder_params']
@@ -172,13 +181,6 @@ def train_autoencoder():
     epochs_no_improve = 0
     patience = 50
     save_path = 'best_model_next_state_predictor.pth'
-    # --- WANDB LOGIN ---
-    try:
-        if not wandb.run:
-            wandb.login()
-    except Exception as e:
-        print(f"wandb login failed or already logged in: {e}")
-    wandb.init(project="autoencoder", config=config)
 
     try:
         for epoch in range(num_epochs):
