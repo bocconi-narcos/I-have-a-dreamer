@@ -173,87 +173,94 @@ def train_autoencoder():
     patience = 50
     save_path = 'best_model_next_state_predictor.pth'
     # --- WANDB LOGIN ---
-    wandb.login()
+    try:
+        if not wandb.run:
+            wandb.login()
+    except Exception as e:
+        print(f"wandb login failed or already logged in: {e}")
     wandb.init(project="autoencoder", config=config)
 
-    for epoch in range(num_epochs):
-        state_encoder.train()
-        state_decoder.train()
-        total_loss = 0
-        total_grid_loss = 0
-        total_shape_loss = 0
-        total_color_stats_loss = 0
-        for i, batch in enumerate(train_loader):
-            state = batch['state'].to(device)
-            shape_w = batch['shape_w'].to(device)
-            shape_h = batch['shape_h'].to(device)
-            num_colors_grid = batch['num_colors_grid'].to(device)
-            most_present_color = batch['most_present_color'].to(device)
-            least_present_color = batch['least_present_color'].to(device)
+    try:
+        for epoch in range(num_epochs):
+            state_encoder.train()
+            state_decoder.train()
+            total_loss = 0
+            total_grid_loss = 0
+            total_shape_loss = 0
+            total_color_stats_loss = 0
+            for i, batch in enumerate(train_loader):
+                state = batch['state'].to(device)
+                shape_w = batch['shape_w'].to(device)
+                shape_h = batch['shape_h'].to(device)
+                num_colors_grid = batch['num_colors_grid'].to(device)
+                most_present_color = batch['most_present_color'].to(device)
+                least_present_color = batch['least_present_color'].to(device)
 
-            latent = state_encoder(
-                state,
-                shape_w=shape_w,
-                shape_h=shape_h,
-                num_unique_colors=num_colors_grid,
-                most_common_color=most_present_color,
-                least_common_color=least_present_color
-            )
-            decoder_output = state_decoder(latent)
+                latent = state_encoder(
+                    state,
+                    shape_w=shape_w,
+                    shape_h=shape_h,
+                    num_unique_colors=num_colors_grid,
+                    most_common_color=most_present_color,
+                    least_common_color=least_present_color
+                )
+                decoder_output = state_decoder(latent)
 
-            loss, loss_dict = autoencoder_loss(
-                decoder_output, state, shape_h, shape_w, most_present_color, least_present_color, num_colors_grid
-            )
+                loss, loss_dict = autoencoder_loss(
+                    decoder_output, state, shape_h, shape_w, most_present_color, least_present_color, num_colors_grid
+                )
 
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                list(state_encoder.parameters()) + list(state_decoder.parameters()),
-                max_norm=1.0
-            )
-            optimizer.step()
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    list(state_encoder.parameters()) + list(state_decoder.parameters()),
+                    max_norm=1.0
+                )
+                optimizer.step()
 
-            total_loss += loss.item() * state.size(0)
-            total_grid_loss += loss_dict['grid_loss'] * state.size(0)
-            total_shape_loss += loss_dict['shape_loss'] * state.size(0)
-            total_color_stats_loss += loss_dict['color_stats_loss'] * state.size(0)
+                total_loss += loss.item() * state.size(0)
+                total_grid_loss += loss_dict['grid_loss'] * state.size(0)
+                total_shape_loss += loss_dict['shape_loss'] * state.size(0)
+                total_color_stats_loss += loss_dict['color_stats_loss'] * state.size(0)
 
-            if (i + 1) % log_interval == 0:
-                print(f"\rEpoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}", end='', flush=True)
+                if (i + 1) % log_interval == 0:
+                    print(f"\rEpoch {epoch+1} Batch {i+1}/{len(train_loader)} Loss: {loss.item():.4f}", end='', flush=True)
 
-        avg_loss = total_loss / len(train_dataset)
-        avg_grid_loss = total_grid_loss / len(train_dataset)
-        avg_shape_loss = total_shape_loss / len(train_dataset)
-        avg_color_stats_loss = total_color_stats_loss / len(train_dataset)
-        val_loss, val_loss_dict = evaluate(state_encoder, state_decoder, val_loader, device)
-        print(f"\rEpoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f}", end='', flush=True)
-        wandb.log({
-            "train_loss": avg_loss,
-            "train_grid_loss": avg_grid_loss,
-            "train_shape_loss": avg_shape_loss,
-            "train_color_stats_loss": avg_color_stats_loss,
-            "val_loss": val_loss,
-            "val_grid_loss": val_loss_dict['grid_loss'],
-            "val_shape_loss": val_loss_dict['shape_loss'],
-            "val_color_stats_loss": val_loss_dict['color_stats_loss']
-        })
+            avg_loss = total_loss / len(train_dataset)
+            avg_grid_loss = total_grid_loss / len(train_dataset)
+            avg_shape_loss = total_shape_loss / len(train_dataset)
+            avg_color_stats_loss = total_color_stats_loss / len(train_dataset)
+            val_loss, val_loss_dict = evaluate(state_encoder, state_decoder, val_loader, device)
+            print(f"\rEpoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f}", end='', flush=True)
+            wandb.log({
+                "train_loss": avg_loss,
+                "train_grid_loss": avg_grid_loss,
+                "train_shape_loss": avg_shape_loss,
+                "train_color_stats_loss": avg_color_stats_loss,
+                "val_loss": val_loss,
+                "val_grid_loss": val_loss_dict['grid_loss'],
+                "val_shape_loss": val_loss_dict['shape_loss'],
+                "val_color_stats_loss": val_loss_dict['color_stats_loss']
+            })
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            epochs_no_improve = 0
-            torch.save({
-                'state_encoder': state_encoder.state_dict(),
-                'state_decoder': state_decoder.state_dict(),
-            }, save_path)
-            print(f"\nNew best model saved to {save_path}")
-        else:
-            epochs_no_improve += 1
-            print(f"\nNo improvement for {epochs_no_improve} epoch(s)")
-        if epochs_no_improve >= patience:
-            print(f"\nEarly stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
-            break
-
-    wandb.finish()
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                epochs_no_improve = 0
+                torch.save({
+                    'state_encoder': state_encoder.state_dict(),
+                    'state_decoder': state_decoder.state_dict(),
+                }, save_path)
+                print(f"\nNew best model saved to {save_path}")
+            else:
+                epochs_no_improve += 1
+                print(f"\nNo improvement for {epochs_no_improve} epoch(s)")
+            if epochs_no_improve >= patience:
+                print(f"\nEarly stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
+                break
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user (KeyboardInterrupt). Exiting gracefully...")
+    finally:
+        wandb.finish()
 
 if __name__ == "__main__":
     train_autoencoder()
