@@ -485,7 +485,8 @@ def train_next_state_predictor():
                 list(mask_encoder.parameters()) + 
                 list(selection_mask_predictor.parameters()) +
                 list(colour_selection_embedder.parameters()) +
-                list(selection_embedder.parameters()), 
+                list(selection_embedder.parameters()) +
+                list(reward_predictor.parameters()),
                 max_norm=1.0
             )
             optimizer.step()
