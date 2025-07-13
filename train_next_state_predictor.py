@@ -18,6 +18,7 @@ from src.models.action_embed import ActionEmbedder
 from tqdm import tqdm
 import torch.nn.functional as F  # type: ignore
 import torch.nn.utils
+import subprocess
 
 # --- EMA Utility ---
 def update_ema(target_model, source_model, decay=0.995):
@@ -161,6 +162,12 @@ def train_next_state_predictor():
     """
     config = load_config()
     buffer_path = config['buffer_path']
+    fast_buffer_path = buffer_path + '.fast.pt'
+    if not os.path.exists(fast_buffer_path):
+        print(f"Fast buffer {fast_buffer_path} not found. Preprocessing...")
+        subprocess.run(['python', 'scripts/preprocess_buffer.py', buffer_path, fast_buffer_path], check=True)
+    else:
+        print(f"Using fast buffer: {fast_buffer_path}")
     encoder_type = config['encoder_type']
     latent_dim = config['latent_dim']
     encoder_params = config['encoder_params']
@@ -218,7 +225,7 @@ def train_next_state_predictor():
         state_shape = (input_channels, image_size[0], image_size[1])
 
     dataset = ReplayBufferDataset(
-        buffer_path=buffer_path,
+        buffer_path=fast_buffer_path,
         num_color_selection_fns=num_color_selection_fns,
         num_selection_fns=num_selection_fns,
         num_transform_actions=num_transform_actions,
