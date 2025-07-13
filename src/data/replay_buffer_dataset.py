@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 import os
 import h5py
 import numpy as np
+from typing import Dict, Any
 
 
 class ReplayBufferDataset(Dataset):
@@ -183,36 +184,37 @@ class ReplayBufferDataset(Dataset):
     def __getitem__(self, idx):
         """Get a single sample from the dataset."""
         if self.fast_tensor_mode:
-            # Direct tensor indexing for speed
+            buf: Dict[str, torch.Tensor] = self.buffer  # type: ignore
             sample = {
-                'state': self.buffer['state'][idx].clone().detach(),
-                'action_colour': self.buffer['action_colour'][idx].clone().detach(),
-                'action_selection': self.buffer['action_selection'][idx].clone().detach(),
-                'action_transform': self.buffer['action_transform'][idx].clone().detach(),
-                'colour': self.buffer['colour'][idx].clone().detach(),
-                'selection_mask': self.buffer['selection_mask'][idx].clone().detach(),
-                'reward': self.buffer['reward'][idx].clone().detach(),
-                'done': self.buffer['done'][idx].clone().detach(),
-                'shape_h': self.buffer['shape_h'][idx].clone().detach(),
-                'shape_h_target': self.buffer['shape_h_target'][idx].clone().detach() if 'shape_h_target' in self.buffer else self.buffer['shape_h'][idx].clone().detach(),
-                'shape_h_next': self.buffer['shape_h_next'][idx].clone().detach() if 'shape_h_next' in self.buffer else self.buffer['shape_h'][idx].clone().detach(),
-                'shape_w': self.buffer['shape_w'][idx].clone().detach(),
-                'shape_w_target': self.buffer['shape_w_target'][idx].clone().detach() if 'shape_w_target' in self.buffer else self.buffer['shape_w'][idx].clone().detach(),
-                'shape_w_next': self.buffer['shape_w_next'][idx].clone().detach() if 'shape_w_next' in self.buffer else self.buffer['shape_w'][idx].clone().detach(),
-                'num_colors_grid': self.buffer['num_colors_grid'][idx].clone().detach(),
-                'num_colors_grid_target': self.buffer['num_colors_grid_target'][idx].clone().detach() if 'num_colors_grid_target' in self.buffer else self.buffer['num_colors_grid'][idx].clone().detach(),
-                'num_colors_grid_next': self.buffer['num_colors_grid_next'][idx].clone().detach() if 'num_colors_grid_next' in self.buffer else self.buffer['num_colors_grid'][idx].clone().detach(),
-                'most_present_color': self.buffer['most_present_color'][idx].clone().detach(),
-                'most_present_color_target': self.buffer['most_present_color_target'][idx].clone().detach() if 'most_present_color_target' in self.buffer else self.buffer['most_present_color'][idx].clone().detach(),
-                'most_present_color_next': self.buffer['most_present_color_next'][idx].clone().detach() if 'most_present_color_next' in self.buffer else self.buffer['most_present_color'][idx].clone().detach(),
-                'least_present_color': self.buffer['least_present_color'][idx].clone().detach(),
-                'least_present_color_target': self.buffer['least_present_color_target'][idx].clone().detach() if 'least_present_color_target' in self.buffer else self.buffer['least_present_color'][idx].clone().detach(),
-                'least_present_color_next': self.buffer['least_present_color_next'][idx].clone().detach() if 'least_present_color_next' in self.buffer else self.buffer['least_present_color'][idx].clone().detach(),
+                'state': buf['state'][idx],
+                'action_colour': buf['action_colour'][idx],
+                'action_selection': buf['action_selection'][idx],
+                'action_transform': buf['action_transform'][idx],
+                'colour': buf['colour'][idx],
+                'selection_mask': buf['selection_mask'][idx],
+                'reward': buf['reward'][idx],
+                'done': buf['done'][idx],
+                'shape_h': buf['shape_h'][idx],
+                'shape_h_target': buf.get('shape_h_target', buf['shape_h'])[idx],
+                'shape_h_next': buf.get('shape_h_next', buf['shape_h'])[idx],
+                'shape_w': buf['shape_w'][idx],
+                'shape_w_target': buf.get('shape_w_target', buf['shape_w'])[idx],
+                'shape_w_next': buf.get('shape_w_next', buf['shape_w'])[idx],
+                'num_colors_grid': buf['num_colors_grid'][idx],
+                'num_colors_grid_target': buf.get('num_colors_grid_target', buf['num_colors_grid'])[idx],
+                'num_colors_grid_next': buf.get('num_colors_grid_next', buf['num_colors_grid'])[idx],
+                'most_present_color': buf['most_present_color'][idx],
+                'most_present_color_target': buf.get('most_present_color_target', buf['most_present_color'])[idx],
+                'most_present_color_next': buf.get('most_present_color_next', buf['most_present_color'])[idx],
+                'least_present_color': buf['least_present_color'][idx],
+                'least_present_color_target': buf.get('least_present_color_target', buf['least_present_color'])[idx],
+                'least_present_color_next': buf.get('least_present_color_next', buf['least_present_color'])[idx],
             }
             if self.mode in ['selection_color', 'end_to_end']:
-                sample['next_state'] = self.buffer['next_state'][idx].clone().detach()
-            sample['target_state'] = self.buffer['target_state'][idx].clone().detach()
-            sample['transition_type'] = self.buffer['transition_type'][idx].clone().detach() if 'transition_type' in self.buffer else None
+                sample['next_state'] = buf['next_state'][idx]
+            sample['target_state'] = buf['target_state'][idx]
+            if 'transition_type' in buf:
+                sample['transition_type'] = buf['transition_type'][idx]
             return sample
         else:
             transition = self.buffer[idx]
@@ -281,8 +283,8 @@ class ReplayBufferDataset(Dataset):
             target_state = self._to_tensor(transition['target_state'], torch.long)
             
             # Add transition_type if present
-            transition_type = transition.get('transition_type', None)
-            sample['transition_type'] = transition_type
+            if 'transition_type' in transition:
+                sample['transition_type'] = self._to_tensor(transition['transition_type'], torch.long)
             sample['target_state'] = target_state
             
             return sample 
