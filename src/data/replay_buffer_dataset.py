@@ -284,7 +284,7 @@ class ReplayBufferDataset(Dataset):
             
             # Add transition_type if present
             if 'transition_type' in transition:
-                sample['transition_type'] = self._to_tensor(transition['transition_type'], torch.long)
+                sample['transition_type'] = transition['transition_type']
             sample['target_state'] = target_state
             
             return sample 
