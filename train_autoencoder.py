@@ -9,6 +9,7 @@ from src.models.state_encoder import StateEncoder
 from src.models.state_decoder import StateDecoder
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
+import subprocess
 
 def load_config(config_path="config_autoencoder.yaml"):
     with open(config_path, "r") as f:
@@ -97,6 +98,12 @@ def train_autoencoder():
     wandb.init(project="autoencoder", config=config)
 
     buffer_path = config['buffer_path']
+    fast_buffer_path = buffer_path + '.fast.pt'
+    if not os.path.exists(fast_buffer_path):
+        print(f"Fast buffer {fast_buffer_path} not found. Preprocessing...")
+        subprocess.run(['python', 'scripts/preprocess_buffer.py', buffer_path, fast_buffer_path], check=True)
+    else:
+        print(f"Using fast buffer: {fast_buffer_path}")
     latent_dim = config['latent_dim']
     encoder_params = config['encoder_params']
     decoder_params = config['decoder_params']
@@ -114,7 +121,7 @@ def train_autoencoder():
         state_shape = (input_channels, image_size[0], image_size[1])
 
     dataset = ReplayBufferDataset(
-        buffer_path=buffer_path,
+        buffer_path=fast_buffer_path,
         num_color_selection_fns=config['num_color_selection_fns'],
         num_selection_fns=config['num_selection_fns'],
         num_transform_actions=config['num_transform_actions'],
