@@ -12,6 +12,8 @@ from src.models.mask_encoder_new import MaskEncoder
 from src.models.predictors.selection_mask_predictor import SelectionMaskPredictor
 from src.models.predictors.next_state_predictor import NextStatePredictor
 from src.models.predictors.reward_predictor import RewardPredictor
+from src.models.state_decoder import StateDecoder
+from src.models.mask_decoder_new import MaskDecoder
 from src.losses.vicreg import VICRegLoss  # Not used, but kept for reference
 from src.data import ReplayBufferDataset
 from src.models.action_embed import ActionEmbedder
@@ -29,17 +31,49 @@ def update_ema(target_model, source_model, decay=0.995):
 # --- Config Loader ---
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    
+    # Add default values for ground truth and decoder switches
+    config.setdefault('use_ground_truth', False)  # Use ground truth inputs instead of predicted
+    config.setdefault('use_decoder_loss', False)   # Use decoder losses instead of latent space losses
+    
+    return config
 
 # --- One-hot encoding utility ---
 def one_hot(indices, num_classes):
     return torch.nn.functional.one_hot(indices, num_classes=num_classes).float()
 
+# --- Autoencoder loss function ---
+def autoencoder_loss(decoder_output, original_grid, shape_h, shape_w, most_common, least_common, unique_count):
+    mask = (original_grid != -1)
+    grid_logits = decoder_output['grid_logits']
+    B, H, W, C = grid_logits.shape
+    grid_loss = F.cross_entropy(
+        grid_logits.reshape(B*H*W, C),
+        (original_grid + 1).clamp(min=0).reshape(B*H*W),
+        reduction='none'
+    ).view(B, H, W)
+    grid_loss = (grid_loss * mask).sum() / mask.sum()
+
+    shape_h_loss = F.cross_entropy(decoder_output['shape_h_logits'], shape_h - 1)
+    shape_w_loss = F.cross_entropy(decoder_output['shape_w_logits'], shape_w - 1)
+    mc_loss = F.cross_entropy(decoder_output['most_common_logits'], most_common)
+    lc_loss = F.cross_entropy(decoder_output['least_common_logits'], least_common)
+    uc_loss = F.cross_entropy(decoder_output['unique_count_logits'], unique_count)
+
+    total_loss = grid_loss + 0.25 * (shape_h_loss + shape_w_loss ) + 0.1* ( mc_loss + lc_loss + uc_loss)
+
+    return total_loss, {
+        'grid_loss': grid_loss.item(),
+        'shape_loss': (shape_h_loss + shape_w_loss).item() / 2,
+        'color_stats_loss': (mc_loss + lc_loss + uc_loss).item() / 3
+    }
+
 # --- Validation Metrics ---
 def evaluate_all_modules(color_predictor, selection_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder, 
-                        colour_selection_embedder, selection_embedder,
-                        dataloader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
-                        use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion):
+                        colour_selection_embedder, selection_embedder, dataloader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
+                        use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion,
+                        state_decoder=None, mask_decoder=None, use_ground_truth=False, use_decoder_loss=False):
     color_predictor.eval()
     selection_predictor.eval()
     next_state_predictor.eval()
@@ -105,19 +139,69 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
 
             # Selection mask prediction - now using embedded selection actions
             action_selection_embedding = selection_embedder(action_selection_onehot)
-            pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
-            target_latent_mask = mask_encoder(selection_mask.to(torch.long))
-            if use_vicreg_selection:
-                selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
+            
+            # Ground truth switch: use one-hot encoded color vs predicted color distribution
+            if use_ground_truth:
+                # Use ground truth one-hot encoded color
+                color_input = one_hot(target_colour, num_color_selection_fns)
             else:
-                selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
+                # Use predicted color distribution
+                color_input = color_logits.softmax(dim=1)
+            
+            pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_input)
+            
+            # Decoder switch: use decoder loss vs latent space loss
+            if use_decoder_loss and mask_decoder is not None:
+                # Decode predicted mask and compute loss against ground truth mask
+                pred_mask_logits = mask_decoder(pred_latent_mask)
+                # Compute cross-entropy loss on the decoded mask
+                B, H, W, C = pred_mask_logits.shape
+                mask_loss = F.cross_entropy(
+                    pred_mask_logits.view(B*H*W, C),
+                    selection_mask.view(B*H*W).long(),
+                    reduction='mean'
+                )
+                selection_loss = mask_loss
+            else:
+                # Use latent space loss (original behavior)
+                target_latent_mask = mask_encoder(selection_mask.to(torch.long))
+                if use_vicreg_selection:
+                    selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
+                else:
+                    selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
 
-            # Next state prediction - pass pred_latent_mask as final latent selection
-            pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
-            if use_vicreg_next_state:
-                next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
+            # Next state prediction - handle ground truth vs predicted inputs
+            # Ground truth switch: use encoded ground truth mask vs predicted mask
+            if use_ground_truth:
+                # Use ground truth encoded mask
+                mask_input = mask_encoder(selection_mask.to(torch.long))
             else:
-                next_state_loss = next_state_criterion(pred_next_latent, latent_next)
+                # Use predicted mask
+                mask_input = pred_latent_mask
+            
+            pred_next_latent = next_state_predictor(latent, action_transform_onehot, mask_input)
+            
+            # Decoder switch: use decoder loss vs latent space loss
+            if use_decoder_loss and state_decoder is not None:
+                # Decode predicted next state and compute loss against ground truth next state
+                pred_next_state_logits = state_decoder(pred_next_latent)
+                # Compute autoencoder-style loss
+                next_state_loss, _ = autoencoder_loss(
+                    pred_next_state_logits, 
+                    next_state, 
+                    shape_h.to(device), 
+                    shape_w.to(device), 
+                    most_present_color.to(device), 
+                    least_present_color.to(device), 
+                    num_colors_grid.to(device)
+                )
+            else:
+                # Use latent space loss (original behavior)
+                if use_vicreg_next_state:
+                    next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
+                else:
+                    next_state_loss = next_state_criterion(pred_next_latent, latent_next)
+
             # Cosine similarity for next state prediction
             pred_next_latent_norm = F.normalize(pred_next_latent, p=2, dim=-1)
             latent_next_norm = F.normalize(latent_next, p=2, dim=-1)
@@ -352,6 +436,33 @@ def train_next_state_predictor():
     ).to(device)
     print(f"[RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
 
+    # Load ground truth and decoder switches
+    use_ground_truth = config.get('use_ground_truth', False)
+    use_decoder_loss = config.get('use_decoder_loss', False)
+    print(f"Training configuration:")
+    print(f"  - Use ground truth inputs: {use_ground_truth}")
+    print(f"  - Use decoder losses: {use_decoder_loss}")
+
+    # Initialize decoders if using decoder losses
+    state_decoder = None
+    mask_decoder = None
+    if use_decoder_loss:
+        # State decoder for next state prediction
+        state_decoder = StateDecoder(
+            image_size=image_size,
+            latent_dim=latent_dim,
+            decoder_params=config.get('decoder_params', {})
+        ).to(device)
+        print(f"[StateDecoder] Number of parameters: {sum(p.numel() for p in state_decoder.parameters())}")
+        
+        # Mask decoder for selection mask prediction
+        mask_decoder = MaskDecoder(
+            image_size=image_size,
+            latent_dim=latent_mask_dim,
+            decoder_params=config.get('mask_decoder_params', {})
+        ).to(device)
+        print(f"[MaskDecoder] Number of parameters: {sum(p.numel() for p in mask_decoder.parameters())}")
+
     # Loss functions
     color_criterion = nn.CrossEntropyLoss()
     vicreg_loss_fn_selection = VICRegLoss(sim_coeff=vicreg_sim_coeff_selection, std_coeff=vicreg_std_coeff_selection, cov_coeff=vicreg_cov_coeff_selection)
@@ -362,18 +473,20 @@ def train_next_state_predictor():
     
     # Optimize all modules together - now including both embedders
     if use_pretrained_encoder and freeze_pretrained_encoder:
-        optimizer = optim.AdamW(
+        optimizer_params = (
             list(color_predictor.parameters()) + 
             list(mask_encoder.parameters()) + 
             list(selection_mask_predictor.parameters()) + 
             list(next_state_predictor.parameters()) +
             list(reward_predictor.parameters()) +
             list(colour_selection_embedder.parameters()) +
-            list(selection_embedder.parameters()), 
-            lr=learning_rate
+            list(selection_embedder.parameters())
         )
+        if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
+            optimizer_params += list(state_decoder.parameters()) + list(mask_decoder.parameters())
+        optimizer = optim.AdamW(optimizer_params, lr=learning_rate)
     else:
-        optimizer = optim.AdamW(
+        optimizer_params = (
             list(state_encoder.parameters()) + 
             list(color_predictor.parameters()) + 
             list(mask_encoder.parameters()) + 
@@ -381,9 +494,11 @@ def train_next_state_predictor():
             list(next_state_predictor.parameters()) +
             list(reward_predictor.parameters()) +
             list(colour_selection_embedder.parameters()) +
-            list(selection_embedder.parameters()), 
-            lr=learning_rate
+            list(selection_embedder.parameters())
         )
+        if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
+            optimizer_params += list(state_decoder.parameters()) + list(mask_decoder.parameters())
+        optimizer = optim.AdamW(optimizer_params, lr=learning_rate)
 
     best_val_loss = float('inf')
     epochs_no_improve = 0
@@ -396,6 +511,11 @@ def train_next_state_predictor():
         selection_mask_predictor.train()
         next_state_predictor.train()
         reward_predictor.train()
+        if use_decoder_loss:
+            if state_decoder is not None:
+                state_decoder.train()
+            if mask_decoder is not None:
+                mask_decoder.train()
         total_color_loss = 0
         total_selection_loss = 0
         total_next_state_loss = 0
@@ -458,27 +578,84 @@ def train_next_state_predictor():
             color_logits = color_predictor(latent, action_color_embedding)
             color_loss = color_criterion(color_logits, selected_color)
 
-            # Selection mask prediction - now using embedded selection actions
+            # Selection mask prediction - handle ground truth vs predicted inputs
             action_selection_embedding = selection_embedder(action_selection_onehot)
-            pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
-            target_latent_mask = mask_encoder(selection_mask.to(torch.long))
-            if use_vicreg_selection:
-                selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
+            
+            # Ground truth switch: use one-hot encoded color vs predicted color distribution
+            if use_ground_truth:
+                # Use ground truth one-hot encoded color
+                color_input = one_hot(selected_color, num_arc_colors)
             else:
-                selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
-
-            # Next state prediction - pass pred_latent_mask as final latent selection
-            pred_next_latent = next_state_predictor(latent, action_transform_onehot, pred_latent_mask)
-            if use_vicreg_next_state:
-                next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
+                # Use predicted color distribution
+                color_input = color_logits.softmax(dim=1)
+            
+            pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_input)
+            
+            # Decoder switch: use decoder loss vs latent space loss
+            if use_decoder_loss and mask_decoder is not None:
+                # Decode predicted mask and compute loss against ground truth mask
+                pred_mask_logits = mask_decoder(pred_latent_mask)
+                # Compute cross-entropy loss on the decoded mask
+                B, H, W, C = pred_mask_logits.shape
+                mask_loss = F.cross_entropy(
+                    pred_mask_logits.view(B*H*W, C),
+                    selection_mask.view(B*H*W).long(),
+                    reduction='mean'
+                )
+                selection_loss = mask_loss
             else:
-                next_state_loss = next_state_criterion(pred_next_latent, latent_next)
+                # Use latent space loss (original behavior)
+                target_latent_mask = mask_encoder(selection_mask.to(torch.long))
+                if use_vicreg_selection:
+                    selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
+                else:
+                    selection_loss = selection_criterion(pred_latent_mask, target_latent_mask)
 
-        
+            # Next state prediction - handle ground truth vs predicted inputs
+            # Ground truth switch: use encoded ground truth mask vs predicted mask
+            if use_ground_truth:
+                # Use ground truth encoded mask
+                mask_input = mask_encoder(selection_mask.to(torch.long))
+            else:
+                # Use predicted mask
+                mask_input = pred_latent_mask
+            
+            pred_next_latent = next_state_predictor(latent, action_transform_onehot, mask_input)
+            
+            # Decoder switch: use decoder loss vs latent space loss
+            if use_decoder_loss and state_decoder is not None:
+                # Decode predicted next state and compute loss against ground truth next state
+                pred_next_state_logits = state_decoder(pred_next_latent)
+                # Compute autoencoder-style loss
+                next_state_loss, _ = autoencoder_loss(
+                    pred_next_state_logits, 
+                    next_state, 
+                    shape_h_next, 
+                    shape_w_next, 
+                    most_present_color_next, 
+                    least_present_color_next, 
+                    num_colors_grid_next
+                )
+            else:
+                # Use latent space loss (original behavior)
+                if use_vicreg_next_state:
+                    next_state_loss, _, _, _ = vicreg_loss_fn_next_state(pred_next_latent, latent_next)
+                else:
+                    next_state_loss = next_state_criterion(pred_next_latent, latent_next)
+
+            # Reward prediction - handle ground truth vs predicted inputs
+            # Ground truth switch: use ground truth next state vs predicted next state
+            if use_ground_truth:
+                # Use ground truth next state
+                next_state_input = latent_next
+            else:
+                # Use predicted next state
+                next_state_input = pred_next_latent
+            
+            # Encode target state for reward prediction
             latent_target = target_encoder(target_state, shape_h=shape_h_target, shape_w=shape_w_target, num_unique_colors=num_colors_grid_target, most_common_color=most_present_color_target, least_common_color=least_present_color_target)
-
-            # Reward prediction
-            pred_reward = reward_predictor(latent, pred_next_latent, latent_target)
+            
+            pred_reward = reward_predictor(latent, next_state_input, latent_target)
             reward_loss = reward_criterion(pred_reward.squeeze(-1), reward.float())
 
             # Combined loss
@@ -486,16 +663,18 @@ def train_next_state_predictor():
 
             optimizer.zero_grad()
             total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(
+            grad_params = (
                 list(state_encoder.parameters()) + 
                 list(color_predictor.parameters()) + 
                 list(mask_encoder.parameters()) + 
                 list(selection_mask_predictor.parameters()) +
                 list(colour_selection_embedder.parameters()) +
                 list(selection_embedder.parameters()) +
-                list(reward_predictor.parameters()),
-                max_norm=1.0
+                list(reward_predictor.parameters())
             )
+            if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
+                grad_params += list(state_decoder.parameters()) + list(mask_decoder.parameters())
+            torch.nn.utils.clip_grad_norm_(grad_params, max_norm=1.0)
             optimizer.step()
 
             # EMA update for target encoder
@@ -526,9 +705,9 @@ def train_next_state_predictor():
 
         val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine = evaluate_all_modules(
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
-            colour_selection_embedder, selection_embedder,
-            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
-            use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion
+            colour_selection_embedder, selection_embedder, val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
+            use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion,
+            state_decoder, mask_decoder, use_ground_truth, use_decoder_loss
         )
 
         # --- Compute validation reward loss --- # TO REVIEW IS THIS CORRECT
@@ -594,7 +773,7 @@ def train_next_state_predictor():
         if val_total_loss < best_val_loss:
             best_val_loss = val_total_loss
             epochs_no_improve = 0
-            torch.save({
+            save_dict = {
                 'state_encoder': state_encoder.state_dict(),
                 'color_predictor': color_predictor.state_dict(),
                 'mask_encoder': mask_encoder.state_dict(),
@@ -604,7 +783,13 @@ def train_next_state_predictor():
                 'colour_selection_embedder': colour_selection_embedder.state_dict(),
                 'selection_embedder': selection_embedder.state_dict(),
                 'target_encoder': target_encoder.state_dict()
-            }, save_path)
+            }
+            if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
+                save_dict.update({
+                    'state_decoder': state_decoder.state_dict(),
+                    'mask_decoder': mask_decoder.state_dict()
+                })
+            torch.save(save_dict, save_path)
             print(f"New best model saved to {save_path}")
         else:
             epochs_no_improve += 1
