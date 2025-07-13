@@ -23,9 +23,8 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     state_encoder.eval()
     target_encoder.eval()
     
-    total_reward_loss = 0
-    total_reward_mae = 0
     total_reward_mse = 0
+    total_reward_mae = 0
     total_samples = 0
     
     with torch.no_grad():
@@ -97,21 +96,18 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
             # Predict reward
             pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
             
-            # Compute losses
-            reward_loss = reward_criterion(pred_reward.squeeze(-1), reward)
-            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)
-            reward_mse = F.mse_loss(pred_reward.squeeze(-1), reward)
+            # Compute MSE and MAE losses
+            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)  # MSE for training
+            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)  # MAE metric
             
-            total_reward_loss += reward_loss.item() * state.size(0)
-            total_reward_mae += reward_mae.item() * state.size(0)
             total_reward_mse += reward_mse.item() * state.size(0)
+            total_reward_mae += reward_mae.item() * state.size(0)
             total_samples += state.size(0)
 
-    avg_reward_loss = total_reward_loss / total_samples
-    avg_reward_mae = total_reward_mae / total_samples
     avg_reward_mse = total_reward_mse / total_samples
+    avg_reward_mae = total_reward_mae / total_samples
     
-    return avg_reward_loss, avg_reward_mae, avg_reward_mse
+    return avg_reward_mse, avg_reward_mae
 
 def train_reward_predictor():
     """
@@ -234,8 +230,8 @@ def train_reward_predictor():
     ).to(device)
     print(f"[RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
 
-    # Loss function
-    reward_criterion = nn.L1Loss()
+    # Loss function - use MSE for training, L1 for MAE metric
+    reward_criterion = nn.MSELoss()
     
     # Optimizer
     if use_pretrained_encoder and freeze_pretrained_encoder:
@@ -260,9 +256,8 @@ def train_reward_predictor():
     for epoch in range(num_epochs):
         state_encoder.train()
         reward_predictor.train()
-        total_reward_loss = 0
-        total_reward_mae = 0
         total_reward_mse = 0
+        total_reward_mae = 0
         total_samples = 0
         
         for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
@@ -333,14 +328,13 @@ def train_reward_predictor():
             # Predict reward
             pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
             
-            # Compute loss
-            reward_loss = reward_criterion(pred_reward.squeeze(-1), reward)
-            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)
-            reward_mse = F.mse_loss(pred_reward.squeeze(-1), reward)
+            # Compute MSE and MAE losses
+            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)  # MSE for training
+            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)  # MAE metric
 
             # Backward pass
             optimizer.zero_grad()
-            reward_loss.backward()
+            reward_mse.backward()
             torch.nn.utils.clip_grad_norm_(
                 list(state_encoder.parameters()) + list(reward_predictor.parameters()),
                 max_norm=1.0
@@ -353,51 +347,46 @@ def train_reward_predictor():
                     target_param.data.mul_(0.995).add_(source_param.data, alpha=1 - 0.995)
 
             # Accumulate metrics
-            total_reward_loss += reward_loss.item() * state.size(0)
-            total_reward_mae += reward_mae.item() * state.size(0)
             total_reward_mse += reward_mse.item() * state.size(0)
+            total_reward_mae += reward_mae.item() * state.size(0)
             total_samples += state.size(0)
 
             # Log batch metrics
             if (i + 1) % log_interval == 0:
                 wandb.log({
-                    "batch_reward_loss": reward_loss.item(),
-                    "batch_reward_mae": reward_mae.item(),
                     "batch_reward_mse": reward_mse.item(),
+                    "batch_reward_mae": reward_mae.item(),
                     "epoch": epoch + 1,
                     "batch": i + 1
                 })
 
         # Compute average training metrics
-        avg_reward_loss = total_reward_loss / total_samples
-        avg_reward_mae = total_reward_mae / total_samples
         avg_reward_mse = total_reward_mse / total_samples
+        avg_reward_mae = total_reward_mae / total_samples
 
         # Evaluate on validation set
-        val_reward_loss, val_reward_mae, val_reward_mse = evaluate_reward_predictor(
+        val_reward_mse, val_reward_mae = evaluate_reward_predictor(
             reward_predictor, state_encoder, target_encoder, val_loader, device, reward_criterion
         )
 
         # Print epoch results
         print(f"Epoch {epoch+1}/{num_epochs}")
-        print(f"  Train - Loss: {avg_reward_loss:.4f}, MAE: {avg_reward_mae:.4f}, MSE: {avg_reward_mse:.4f}")
-        print(f"  Val   - Loss: {val_reward_loss:.4f}, MAE: {val_reward_mae:.4f}, MSE: {val_reward_mse:.4f}")
+        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}")
+        print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}")
 
         # Log to wandb
         wandb.log({
             "epoch": epoch + 1,
-            "train_reward_loss": avg_reward_loss,
-            "train_reward_mae": avg_reward_mae,
             "train_reward_mse": avg_reward_mse,
-            "val_reward_loss": val_reward_loss,
-            "val_reward_mae": val_reward_mae,
+            "train_reward_mae": avg_reward_mae,
             "val_reward_mse": val_reward_mse,
+            "val_reward_mae": val_reward_mae,
             "learning_rate": optimizer.param_groups[0]['lr']
         })
 
         # Save best model
-        if val_reward_loss < best_val_loss:
-            best_val_loss = val_reward_loss
+        if val_reward_mse < best_val_loss:
+            best_val_loss = val_reward_mse
             epochs_no_improve = 0
             torch.save({
                 'state_encoder': state_encoder.state_dict(),
@@ -413,7 +402,7 @@ def train_reward_predictor():
             print(f"No improvement for {epochs_no_improve} epoch(s)")
             
         if epochs_no_improve >= patience:
-            print(f"Early stopping at epoch {epoch+1} due to no improvement in validation loss for {patience} epochs.")
+            print(f"Early stopping at epoch {epoch+1} due to no improvement in validation MSE for {patience} epochs.")
             break
 
     wandb.finish()
