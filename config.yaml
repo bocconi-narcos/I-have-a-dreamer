@@ -5,7 +5,7 @@ buffer_path: "data/buffer_500.pt"  # Path to replay buffer file (use dummy data 
 
 # Training Switches 
 use_ground_truth: true # Use ground truth inputs instead of predicted inputs
-use_decoder_loss: false  # Use decoder losses instead of latent space losses
+use_decoder_loss: true  # Use decoder losses instead of latent space losses
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
