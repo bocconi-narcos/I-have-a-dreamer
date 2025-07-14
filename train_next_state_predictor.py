@@ -73,7 +73,7 @@ def autoencoder_loss(decoder_output, original_grid, shape_h, shape_w, most_commo
 def evaluate_all_modules(color_predictor, selection_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder, 
                         colour_selection_embedder, selection_embedder, dataloader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
                         use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion,
-                        state_decoder=None, mask_decoder=None, use_ground_truth=False, use_decoder_loss=False):
+                        state_decoder=None, mask_decoder=None, use_ground_truth=False, use_decoder_loss=False, num_arc_colors=None):
     color_predictor.eval()
     selection_predictor.eval()
     next_state_predictor.eval()
@@ -142,8 +142,8 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             
             # Ground truth switch: use one-hot encoded color vs predicted color distribution
             if use_ground_truth:
-                # Use ground truth one-hot encoded color
-                color_input = one_hot(target_colour, num_color_selection_fns)
+                # Use ground truth one-hot encoded color (always use num_arc_colors)
+                color_input = one_hot(target_colour, num_arc_colors)
             else:
                 # Use predicted color distribution
                 color_input = color_logits.softmax(dim=1)
@@ -583,7 +583,7 @@ def train_next_state_predictor():
             
             # Ground truth switch: use one-hot encoded color vs predicted color distribution
             if use_ground_truth:
-                # Use ground truth one-hot encoded color
+                # Use ground truth one-hot encoded color (always use num_arc_colors)
                 color_input = one_hot(selected_color, num_arc_colors)
             else:
                 # Use predicted color distribution
@@ -707,7 +707,7 @@ def train_next_state_predictor():
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
             colour_selection_embedder, selection_embedder, val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
             use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion,
-            state_decoder, mask_decoder, use_ground_truth, use_decoder_loss
+            state_decoder, mask_decoder, use_ground_truth, use_decoder_loss, num_arc_colors
         )
 
         # --- Compute validation reward loss --- # TO REVIEW IS THIS CORRECT
