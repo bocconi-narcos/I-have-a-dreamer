@@ -337,7 +337,7 @@ def train_next_state_predictor():
     # --- WANDB LOGIN ---
     # Initialize wandb
     wandb_config = config.copy()
-    wandb.init(project="next-state-predictor", config=wandb_config)  # type: ignore
+    wandb.init(project="next-state-predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
 
     # --- Load pretrained encoder if specified ---
     use_pretrained_encoder = config.get('use_pretrained_encoder', False)
