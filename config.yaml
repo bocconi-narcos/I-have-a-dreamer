@@ -3,6 +3,10 @@
 # Data
 buffer_path: "data/buffer_500.pt"  # Path to replay buffer file (use dummy data if not found)
 
+# Training Switches 
+use_ground_truth: true # Use ground truth inputs instead of predicted inputs
+use_decoder_loss: false  # Use decoder losses instead of latent space losses
+
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
 latent_dim: 196
@@ -99,6 +103,23 @@ reward_predictor:
   transformer_mlp_dim: 128
   transformer_dropout: 0.1
   proj_dim: null  # If provided, project latents to this dim
+
+# Decoder Parameters (used when use_decoder_loss is true)
+decoder_params:
+  depth: 4
+  heads: 8
+  mlp_dim: 512
+  transformer_dim: 64
+  dropout: 0.2
+  colors_vocab_size: 12
+
+mask_decoder_params:
+  depth: 4
+  heads: 8
+  mlp_dim: 256
+  transformer_dim: 64
+  dropout: 0.1
+  colors_vocab_size: 3
 
 # Continuation Predictor Module (Transformer-based)
 continuation_predictor:
