@@ -1,5 +1,4 @@
 import os
-os.environ["WANDB_SILENT"] = "true"
 import copy
 import torch
 import torch.nn as nn
