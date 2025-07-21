@@ -9,9 +9,12 @@ use_decoder_loss: false  # Use decoder losses instead of latent space losses
 
 # State Encoder (Shared across all modules)
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
-latent_dim: 256
+latent_dim: 128
 use_pretrained_encoder: false  # Set to true to load pretrained encoder from best_model_autoencoder.pth
-pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained autoencoder checkpoint
+pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained autoencoder checkpointò§
+
+
+
 freeze_pretrained_encoder: true  # Set to true to freeze pretrained encoder parameters
 num_arc_colors: 12  # Number of colors in the arc (used for color prediction)
 
