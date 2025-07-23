@@ -113,6 +113,98 @@ def evaluate_selection_and_color(selection_predictor, color_predictor, state_enc
     return avg_selection_loss, avg_color_loss, color_accuracy, avg_sim_loss, avg_std_loss, avg_cov_loss    
     
 
+# --- Validation function update ---
+def evaluate_selection_and_color_with_switches(selection_predictor, color_predictor, state_encoder, mask_encoder, 
+                                colour_selection_embedder, selection_embedder, mask_decoder,
+                                dataloader, device, criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn, mse_loss_fn, use_ground_truth, use_decoder_loss, num_arc_colors):
+    selection_predictor.eval()
+    color_predictor.eval()
+    state_encoder.eval()
+    mask_encoder.eval()
+    if mask_decoder is not None:
+        mask_decoder.eval()
+    total_selection_loss = 0
+    total_color_loss = 0
+    total_sim_loss = 0
+    total_std_loss = 0
+    total_cov_loss = 0
+    color_correct = 0
+    total = 0
+    with torch.no_grad():
+        for batch in dataloader:
+            state = batch['state'].to(device)
+            if state.dim() == 4 and state.shape[1] == 1:
+                state = state.squeeze(1)
+            state = state.long()
+            action_colour = batch['action_colour'].to(device)
+            action_selection = batch['action_selection'].to(device)
+            target_colour = batch['colour'].to(device)
+            selection_mask = batch['selection_mask'].to(device)
+            shape_w = batch['shape_w'].to(device)
+            shape_h = batch['shape_h'].to(device)
+            num_colors_grid = batch['num_colors_grid'].to(device)
+            most_present_color = batch['most_present_color'].to(device)
+            least_present_color = batch['least_present_color'].to(device)
+            if state.dim() == 3:
+                state = state.unsqueeze(1)
+                selection_mask = selection_mask.unsqueeze(1)
+            latent = state_encoder(
+                state,
+                shape_w=shape_w,
+                shape_h=shape_h,
+                num_unique_colors=num_colors_grid,
+                most_common_color=most_present_color,
+                least_common_color=least_present_color
+            )
+            action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
+            action_selection_onehot = one_hot(action_selection, num_selection_fns)
+            action_color_embedding = colour_selection_embedder(action_colour_onehot)
+            color_logits = color_predictor(latent, action_color_embedding)
+            color_loss = criterion(color_logits, target_colour)
+            action_selection_embedding = selection_embedder(action_selection_onehot)
+            if use_ground_truth:
+                color_input = one_hot(target_colour, num_arc_colors)
+            else:
+                color_input = color_logits.softmax(dim=1)
+            pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_input)
+            if use_decoder_loss and mask_decoder is not None:
+                pred_mask_logits = mask_decoder(pred_latent_mask)
+                B, H, W, C = pred_mask_logits.shape
+                mask_loss = nn.functional.cross_entropy(
+                    pred_mask_logits.view(B*H*W, C),
+                    selection_mask.view(B*H*W).long(),
+                    reduction='mean'
+                )
+                selection_loss = mask_loss
+                sim_loss = torch.tensor(0.0)
+                std_loss = torch.tensor(0.0)
+                cov_loss = torch.tensor(0.0)
+            else:
+                target_latent_mask = mask_encoder(selection_mask.long())
+                if use_vicreg:
+                    selection_loss, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+                else:
+                    selection_loss = mse_loss_fn(pred_latent_mask, target_latent_mask)
+                    sim_loss = torch.tensor(0.0)
+                    std_loss = torch.tensor(0.0)
+                    cov_loss = torch.tensor(0.0)
+            total_selection_loss += selection_loss.item() * state.size(0)
+            total_color_loss += color_loss.item() * state.size(0)
+            total_sim_loss += sim_loss.item() * state.size(0)
+            total_std_loss += std_loss.item() * state.size(0)
+            total_cov_loss += cov_loss.item() * state.size(0)
+            color_preds = torch.argmax(color_logits, dim=1)
+            color_correct += (color_preds == target_colour).sum().item()
+            total += state.size(0)
+    avg_selection_loss = total_selection_loss / total
+    avg_color_loss = total_color_loss / total
+    avg_sim_loss = total_sim_loss / total
+    avg_std_loss = total_std_loss / total
+    avg_cov_loss = total_cov_loss / total
+    color_accuracy = color_correct / total
+    return avg_selection_loss, avg_color_loss, color_accuracy, avg_sim_loss, avg_std_loss, avg_cov_loss
+
+
 # --- Main Training Loop ---
 def train_selection_predictor():
     """
@@ -129,6 +221,13 @@ def train_selection_predictor():
     config = load_config()
     buffer_path = config['buffer_path']
     latent_dim = config['latent_dim']
+
+    # --- Load ground truth and decoder switches ---
+    use_ground_truth = config.get('use_ground_truth', False)
+    use_decoder_loss = config.get('use_decoder_loss', False)
+    print(f"Training configuration:")
+    print(f"  - Use ground truth inputs: {use_ground_truth}")
+    print(f"  - Use decoder losses: {use_decoder_loss}")
 
     # Encoder parameters
     encoder_params = config['encoder_params']
@@ -160,6 +259,17 @@ def train_selection_predictor():
     # Color predictor parameters
     num_arc_colors = config['num_arc_colors']
     color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
+
+    # --- MaskDecoder instantiation if needed ---
+    mask_decoder = None
+    if use_decoder_loss:
+        from src.models.mask_decoder_new import MaskDecoder
+        mask_decoder = MaskDecoder(
+            image_size=encoder_params.get('image_size', [10, 10]),
+            latent_dim=latent_mask_dim,
+            decoder_params=config.get('mask_decoder_params', {})
+        ).to(device)
+        print(f"[MaskDecoder] Number of parameters: {sum(p.numel() for p in mask_decoder.parameters())}")
 
     # VICReg parameters
     selection_cfg = config['selection_mask']
@@ -273,7 +383,8 @@ def train_selection_predictor():
     best_val_loss = float('inf')
     epochs_no_improve = 0
     patience = 10
-    save_path = 'best_model_selection_predictor.pth'
+    save_path = os.path.join('weights', 'best_model_selection_predictor.pth')
+    os.makedirs('weights', exist_ok=True)
     if WANDB_AVAILABLE:
         wandb.init(project="selection_predictor", config=config)
     
@@ -340,17 +451,35 @@ def train_selection_predictor():
             # Selection mask prediction - now using embedded selection actions
             action_selection_embedding = selection_embedder(action_selection_onehot)
 
-            pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_logits.softmax(dim=1))
-            target_latent_mask = mask_encoder(selection_mask.long())
-            
-            # Use VICReg or MSE loss for selection mask prediction
-            if use_vicreg:
-                selection_loss, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+            # --- Ground truth switch: use one-hot encoded color vs predicted color distribution ---
+            if use_ground_truth:
+                color_input = one_hot(target_colour, num_arc_colors)
             else:
-                selection_loss = mse_loss_fn(pred_latent_mask, target_latent_mask)
+                color_input = color_logits.softmax(dim=1)
+            pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_input)
+
+            # --- Decoder switch: use decoder loss vs latent space loss ---
+            if use_decoder_loss and mask_decoder is not None:
+                pred_mask_logits = mask_decoder(pred_latent_mask)
+                B, H, W, C = pred_mask_logits.shape
+                mask_loss = nn.functional.cross_entropy(
+                    pred_mask_logits.view(B*H*W, C),
+                    selection_mask.view(B*H*W).long(),
+                    reduction='mean'
+                )
+                selection_loss = mask_loss
                 sim_loss = torch.tensor(0.0)
                 std_loss = torch.tensor(0.0)
                 cov_loss = torch.tensor(0.0)
+            else:
+                target_latent_mask = mask_encoder(selection_mask.long())
+                if use_vicreg:
+                    selection_loss, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+                else:
+                    selection_loss = mse_loss_fn(pred_latent_mask, target_latent_mask)
+                    sim_loss = torch.tensor(0.0)
+                    std_loss = torch.tensor(0.0)
+                    cov_loss = torch.tensor(0.0)
             
             # Combined loss
             total_loss = color_loss + selection_loss
@@ -393,10 +522,10 @@ def train_selection_predictor():
 
         train_pbar.close()
         
-        avg_selection_loss, avg_color_loss, color_accuracy, avg_val_sim_loss, avg_val_std_loss, avg_val_cov_loss = evaluate_selection_and_color(
+        avg_selection_loss, avg_color_loss, color_accuracy, avg_val_sim_loss, avg_val_std_loss, avg_val_cov_loss = evaluate_selection_and_color_with_switches(
             selection_mask_predictor, color_predictor, state_encoder, mask_encoder, 
-            colour_selection_embedder, selection_embedder,
-            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, vicreg_loss_fn, mse_loss_fn, use_vicreg)
+            colour_selection_embedder, selection_embedder, mask_decoder,
+            val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn, mse_loss_fn, use_ground_truth, use_decoder_loss, num_arc_colors)
         
         # Calculate average training losses
         num_train_samples = sum(batch['state'].size(0) for batch in train_loader)
@@ -445,7 +574,7 @@ def train_selection_predictor():
                 'colour_selection_embedder': colour_selection_embedder.state_dict(),
                 'selection_embedder': selection_embedder.state_dict()
             }, save_path)
-            torch.save(state_encoder.state_dict(), 'best_model_state_encoder.pth')
+            torch.save(state_encoder.state_dict(), os.path.join('weights', 'best_model_state_encoder.pth'))
             improvement_status = f" ✓ New best model saved!"
         else:
             epochs_no_improve += 1
