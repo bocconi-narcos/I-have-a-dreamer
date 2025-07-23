@@ -166,3 +166,7 @@ next_state_predictor_training:
 full_model_training:
   early_stopping_patience: 10
   best_model_save_path: "best_model_full_model.pth" 
+
+# Essential stabilization parameters for reward predictor
+gradient_clip_norm: 1.0
+early_stopping_patience: 10 

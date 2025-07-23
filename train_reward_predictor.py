@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import yaml
 import wandb
 from src.models.state_encoder import StateEncoder
@@ -97,17 +98,15 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
             pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
             
             # Compute MSE and MAE losses
-            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)  # MSE for training
-            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)  # MAE metric
+            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)
+            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)
             
+            # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
             total_reward_mae += reward_mae.item() * state.size(0)
             total_samples += state.size(0)
-
-    avg_reward_mse = total_reward_mse / total_samples
-    avg_reward_mae = total_reward_mae / total_samples
     
-    return avg_reward_mse, avg_reward_mae
+    return total_reward_mse / total_samples, total_reward_mae / total_samples
 
 def train_reward_predictor():
     """
@@ -144,6 +143,10 @@ def train_reward_predictor():
     learning_rate = config['learning_rate']
     num_workers = config['num_workers']
     log_interval = config['log_interval']
+    
+    # Simple stabilization parameters
+    gradient_clip_norm = config.get('gradient_clip_norm', 1.0)
+    patience = config.get('early_stopping_patience', 10)
 
     # State shape
     image_size = encoder_params.get('image_size', [10, 10])
@@ -237,22 +240,30 @@ def train_reward_predictor():
     if use_pretrained_encoder and freeze_pretrained_encoder:
         optimizer = optim.AdamW(
             list(reward_predictor.parameters()), 
-            lr=learning_rate
+            lr=learning_rate,
+            weight_decay=1e-4
         )
     else:
         optimizer = optim.AdamW(
             list(state_encoder.parameters()) + list(reward_predictor.parameters()), 
-            lr=learning_rate
+            lr=learning_rate,
+            weight_decay=1e-4
         )
+
+    # Simple learning rate scheduler
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs)
 
     # Training loop
     best_val_loss = float('inf')
     epochs_no_improve = 0
-    patience = 10
     save_path = os.path.join('weights', 'best_model_reward_predictor.pth')
     os.makedirs('weights', exist_ok=True)
     
     print(f"Starting training with {len(train_dataset)} training samples and {len(val_dataset)} validation samples")
+    print(f"Stabilization features:")
+    print(f"  - Gradient clipping: {gradient_clip_norm}")
+    print(f"  - Early stopping patience: {patience}")
+    print(f"  - Cosine annealing scheduler")
     
     for epoch in range(num_epochs):
         state_encoder.train()
@@ -330,16 +341,22 @@ def train_reward_predictor():
             pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
             
             # Compute MSE and MAE losses
-            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)  # MSE for training
-            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)  # MAE metric
+            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)
+            reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)
 
-            # Backward pass
+            # Backward pass with gradient clipping
             optimizer.zero_grad()
             reward_mse.backward()
-            torch.nn.utils.clip_grad_norm_(
-                list(state_encoder.parameters()) + list(reward_predictor.parameters()),
-                max_norm=1.0
-            )
+            
+            # Gradient clipping for all parameters
+            if use_pretrained_encoder and freeze_pretrained_encoder:
+                torch.nn.utils.clip_grad_norm_(reward_predictor.parameters(), max_norm=gradient_clip_norm)
+            else:
+                torch.nn.utils.clip_grad_norm_(
+                    list(state_encoder.parameters()) + list(reward_predictor.parameters()),
+                    max_norm=gradient_clip_norm
+                )
+            
             optimizer.step()
 
             # EMA update for target encoder
@@ -357,9 +374,13 @@ def train_reward_predictor():
                 wandb.log({
                     "batch_reward_mse": reward_mse.item(),
                     "batch_reward_mae": reward_mae.item(),
+                    "learning_rate": optimizer.param_groups[0]['lr'],
                     "epoch": epoch + 1,
                     "batch": i + 1
                 })
+
+        # Update learning rate
+        scheduler.step()
 
         # Compute average training metrics
         avg_reward_mse = total_reward_mse / total_samples
@@ -374,6 +395,7 @@ def train_reward_predictor():
         print(f"Epoch {epoch+1}/{num_epochs}")
         print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}")
         print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}")
+        print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
         # Log to wandb
         wandb.log({
