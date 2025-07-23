@@ -208,7 +208,8 @@ def train_color_predictor():
     best_val_loss                           = float('inf')
     epochs_no_improve                       = 0
     patience                                = 50
-    save_path                               = 'best_model_color_predictor.pth'
+    save_path                               = os.path.join('weights', 'best_model_color_predictor.pth')
+    os.makedirs('weights', exist_ok=True)
     wandb.init(project="color_predictor", config=config)
     
     print(f"\nStarting training for {num_epochs} epochs...")
