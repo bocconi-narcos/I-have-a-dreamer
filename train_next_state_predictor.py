@@ -503,7 +503,8 @@ def train_next_state_predictor():
     best_val_loss = float('inf')
     epochs_no_improve = 0
     patience = 10
-    save_path = 'best_model_next_state_predictor.pth'
+    save_path = os.path.join('weights', 'best_model_next_state_predictor.pth')
+    os.makedirs('weights', exist_ok=True)
     for epoch in range(num_epochs):
         state_encoder.train()
         color_predictor.train()
