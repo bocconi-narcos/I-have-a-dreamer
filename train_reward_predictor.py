@@ -249,7 +249,8 @@ def train_reward_predictor():
     best_val_loss = float('inf')
     epochs_no_improve = 0
     patience = 10
-    save_path = 'best_model_reward_predictor.pth'
+    save_path = os.path.join('weights', 'best_model_reward_predictor.pth')
+    os.makedirs('weights', exist_ok=True)
     
     print(f"Starting training with {len(train_dataset)} training samples and {len(val_dataset)} validation samples")
     
