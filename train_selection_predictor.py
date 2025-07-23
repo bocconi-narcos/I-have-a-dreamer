@@ -218,6 +218,9 @@ def train_selection_predictor():
         6. Computes MSE/VICReg loss for selection and cross-entropy loss for color.
     All model choices and hyperparameters are loaded from config.yaml.
     """
+    # Set device to Mac GPU (MPS) if available, otherwise CPU
+    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+
     config = load_config()
     buffer_path = config['buffer_path']
     latent_dim = config['latent_dim']
@@ -295,6 +298,7 @@ def train_selection_predictor():
     else:
         state_shape = (input_channels, image_size[0], image_size[1])
 
+    # print("[DEBUG] Before dataset creation")
     dataset = ReplayBufferDataset(
         buffer_path=buffer_path,
         num_color_selection_fns=num_color_selection_fns,
@@ -304,13 +308,14 @@ def train_selection_predictor():
         state_shape=state_shape,
         mode='selection_color'
     )
+    # print("[DEBUG] After dataset creation")
     val_size = int(0.2 * len(dataset))
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    # print("[DEBUG] After random_split")
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
-    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    # print("[DEBUG] After DataLoader creation")
     
     # Initialize models
     state_encoder = StateEncoder(
@@ -339,7 +344,7 @@ def train_selection_predictor():
     selection_mask_predictor = SelectionMaskPredictor(
         state_dim=latent_dim,
         selection_action_embed_dim=selection_dim,  # Use embedded dimension instead of one-hot
-        color_pred_dim=num_arc_colors-1,  # Assuming color prediction dimension
+        color_pred_dim=num_arc_colors,  # Use full number of colors to match input
         latent_mask_dim=latent_mask_dim,
         transformer_depth=transformer_depth,
         transformer_heads=transformer_heads,
@@ -393,9 +398,10 @@ def train_selection_predictor():
     print(f"Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
     print("-" * 80)
     
-    # Main epoch progress bar
+    # print("[DEBUG] Before epoch loop")
     epoch_pbar = tqdm(range(num_epochs), desc='Training Progress', ncols=120)
     for epoch in epoch_pbar:
+        # print(f"[DEBUG] Starting epoch {epoch+1}")
         state_encoder.train()
         color_predictor.train()
         mask_encoder.train()
@@ -406,11 +412,10 @@ def train_selection_predictor():
         total_std_loss = 0
         total_cov_loss = 0
         
-        # Create progress bar for training batches
-        train_pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs}', 
-                         leave=False, ncols=100)
-        
+        # print(f"[DEBUG] Before batch loop for epoch {epoch+1}")
+        train_pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs}', leave=False, ncols=100)
         for i, batch in enumerate(train_pbar):
+            # print(f"[DEBUG] Processing batch {i+1} of epoch {epoch+1}")
             state = batch['state'].to(device)
             if state.dim() == 4 and state.shape[1] == 1:
                 state = state.squeeze(1)
@@ -496,54 +501,30 @@ def train_selection_predictor():
                 max_norm=1.0
             )
             optimizer.step()
-
-            # Log gradients to wandb
-            if WANDB_AVAILABLE and (i % log_interval == 0):
-                # Log training metrics
-                step = epoch * len(train_loader) + i
-                wandb.log({
-                    'batch/color_loss': color_loss.item(),
-                    'batch/selection_loss': selection_loss.item(),
-                    'batch/vicreg_sim_loss': sim_loss.item(),
-                    'batch/vicreg_std_loss': std_loss.item(),
-                    'batch/vicreg_cov_loss': cov_loss.item(),
-                    'batch/total_loss': total_loss.item(),
-                }, step=step)
-                
-             
-            total_selection_loss += selection_loss.item() * state.size(0)
-            total_color_loss += color_loss.item() * state.size(0)
-            total_sim_loss += sim_loss.item() * state.size(0)
-            total_std_loss += std_loss.item() * state.size(0)
-            total_cov_loss += cov_loss.item() * state.size(0)
-            
-            # Update progress bar with current loss
             train_pbar.set_postfix({'Color Loss': f'{color_loss.item():.4f}', 'Selection Loss': f'{selection_loss.item():.4f}'})
-
         train_pbar.close()
-        
+        # print(f"[DEBUG] Finished all batches for epoch {epoch+1}")
+        # End of batch loop
+        # Print average losses for the epoch
+        avg_selection_loss = total_selection_loss / len(train_loader.dataset)
+        avg_color_loss = total_color_loss / len(train_loader.dataset)
+        print(f"Epoch {epoch+1}/{num_epochs} | Train Sel: {avg_selection_loss:.4f} | Train Col: {avg_color_loss:.4f}")
+        # print(f"[DEBUG] End of epoch {epoch+1}")
+                
         avg_selection_loss, avg_color_loss, color_accuracy, avg_val_sim_loss, avg_val_std_loss, avg_val_cov_loss = evaluate_selection_and_color_with_switches(
             selection_mask_predictor, color_predictor, state_encoder, mask_encoder, 
             colour_selection_embedder, selection_embedder, mask_decoder,
             val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn, mse_loss_fn, use_ground_truth, use_decoder_loss, num_arc_colors)
         
-        # Calculate average training losses
-        num_train_samples = sum(batch['state'].size(0) for batch in train_loader)
-        avg_train_selection_loss = total_selection_loss / num_train_samples
-        avg_train_color_loss = total_color_loss / num_train_samples
-        avg_train_sim_loss = total_sim_loss / num_train_samples
-        avg_train_std_loss = total_std_loss / num_train_samples
-        avg_train_cov_loss = total_cov_loss / num_train_samples
-        
         # Log to wandb
         if WANDB_AVAILABLE:
             wandb.log({
                 'epoch': epoch + 1,
-                'train/selection_loss': avg_train_selection_loss,
-                'train/color_loss': avg_train_color_loss,
-                'train/vicreg_sim_loss': avg_train_sim_loss,
-                'train/vicreg_std_loss': avg_train_std_loss,
-                'train/vicreg_cov_loss': avg_train_cov_loss,
+                'train/selection_loss': avg_selection_loss,
+                'train/color_loss': avg_color_loss,
+                'train/vicreg_sim_loss': avg_val_sim_loss,
+                'train/vicreg_std_loss': avg_val_std_loss,
+                'train/vicreg_cov_loss': avg_val_cov_loss,
                 'val/selection_loss': avg_selection_loss,
                 'val/color_loss': avg_color_loss,
                 'val/color_accuracy': color_accuracy,
@@ -554,8 +535,8 @@ def train_selection_predictor():
         
         # Update epoch progress bar
         epoch_pbar.set_postfix({
-            'Train Sel': f'{avg_train_selection_loss:.4f}',
-            'Train Col': f'{avg_train_color_loss:.4f}',
+            'Train Sel': f'{avg_selection_loss:.4f}',
+            'Train Col': f'{avg_color_loss:.4f}',
             'Val Sel': f'{avg_selection_loss:.4f}',
             'Val Col': f'{avg_color_loss:.4f}',
             'Val Acc': f'{color_accuracy:.4f}',
@@ -581,7 +562,7 @@ def train_selection_predictor():
             improvement_status = f" ({epochs_no_improve} epochs without improvement)"
         
         # Print detailed epoch summary
-        tqdm.write(f"Epoch {epoch+1:3d}/{num_epochs} | Train Sel: {avg_train_selection_loss:.4f} | Train Col: {avg_train_color_loss:.4f} | Val Sel: {avg_selection_loss:.4f} | Val Col: {avg_color_loss:.4f} | Acc: {color_accuracy:.4f}{improvement_status}")
+        tqdm.write(f"Epoch {epoch+1:3d}/{num_epochs} | Train Sel: {avg_selection_loss:.4f} | Train Col: {avg_color_loss:.4f} | Val Sel: {avg_selection_loss:.4f} | Val Col: {avg_color_loss:.4f} | Acc: {color_accuracy:.4f}{improvement_status}")
         
         # Early stopping check
         if epochs_no_improve >= patience:
