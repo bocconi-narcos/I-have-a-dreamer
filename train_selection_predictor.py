@@ -568,7 +568,7 @@ def train_selection_predictor():
             val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn, mse_loss_fn, use_ground_truth, use_decoder_loss, num_arc_colors)
         
         # Log validation metrics to wandb
-        if WANDB_AVAILABLE:
+        if wandb_available:
             log_dict = {
                 'step': global_step,
                 'epoch': epoch + 1,
@@ -632,7 +632,7 @@ def train_selection_predictor():
     print(f"Best model saved to: {save_path}")
     print("="*80)
 
-    if WANDB_AVAILABLE:
+    if wandb_available:
         wandb.finish()
 
 if __name__ == "__main__":
