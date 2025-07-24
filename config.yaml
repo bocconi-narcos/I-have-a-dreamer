@@ -80,7 +80,7 @@ selection_mask:
   use_vicreg: true
   vicreg_sim_coeff: 5
   vicreg_std_coeff: 25
-  vicreg_cov_coeff: 1
+  vicreg_cov_coeff: 0.1
 
 # Next State Predictor Module
 next_state:
@@ -141,7 +141,7 @@ vicreg:              # Configuration for VICReg loss in color predictor
     params:
       sim_coeff: 5
       std_coeff: 25
-      cov_coeff: 1
+      cov_coeff: 0.1
       eps: 0.0001
       proj_hidden_dim: 512
       proj_output_dim: 512
