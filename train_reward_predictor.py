@@ -172,13 +172,14 @@ def train_reward_predictor():
     
     # Initialize wandb
     wandb_config = config.copy()
+    wandb_available = True
     try:
         wandb.init(project="reward-predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
         print("Wandb initialized successfully!")
     except Exception as e:
         print(f"Wandb initialization failed: {e}")
         print("Continuing without wandb logging...")
-        wandb = None
+        wandb_available = False
     
     # Buffer setup with fast tensor mode
     buffer_path = config['buffer_path']
@@ -443,14 +444,18 @@ def train_reward_predictor():
             total_samples += state.size(0)
 
             # Log batch metrics every log_interval steps
-            if global_step % log_interval == 0 and wandb is not None:
+            if global_step % log_interval == 0 and wandb_available:
+                # Calculate batch R² for debugging
+                batch_r2 = calculate_r2_score(reward, pred_reward.squeeze(-1))
                 wandb.log({
                     "step": global_step,
                     "epoch": epoch + 1,
                     "batch_reward_mse": reward_mse.item(),
                     "batch_reward_mae": reward_mae.item(),
+                    "batch_reward_r2": batch_r2,
                     "learning_rate": optimizer.param_groups[0]['lr'],
                 })
+                print(f"Batch {global_step} - MSE: {reward_mse.item():.4f}, MAE: {reward_mae.item():.4f}, R²: {batch_r2:.4f}")
 
         # Update learning rate
         scheduler.step()
@@ -481,8 +486,8 @@ def train_reward_predictor():
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
         # Log validation metrics to wandb
-        if wandb is not None:
-            wandb.log({
+        if wandb_available:
+            log_dict = {
                 "step": global_step,
                 "epoch": epoch + 1,
                 "train_reward_mse": avg_reward_mse,
@@ -492,8 +497,10 @@ def train_reward_predictor():
                 "val_reward_mae": val_reward_mae,
                 "val_reward_r2": val_r2,
                 "learning_rate": optimizer.param_groups[0]['lr']
-            })
-            print(f"Logged metrics to wandb - Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            }
+            print(f"Logging to wandb: {log_dict}")
+            wandb.log(log_dict)
+            print(f"Successfully logged metrics to wandb - Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
         else:
             print(f"Wandb not available - Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
@@ -518,7 +525,7 @@ def train_reward_predictor():
             print(f"Early stopping at epoch {epoch+1} due to no improvement in validation MSE for {patience} epochs.")
             break
 
-    if wandb is not None:
+    if wandb_available:
         wandb.finish()
     print("Training completed!")
 
