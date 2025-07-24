@@ -121,7 +121,7 @@ def train_color_predictor():
         num_color_selection_fns=num_color_selection_fns,
         num_selection_fns=num_selection_fns,
         num_transform_actions=num_transform_actions,
-        num_arc_colors=num_arc_colors-1,
+        num_arc_colors=num_arc_colors,
         state_shape=state_shape,
         mode='color_only'
     )
@@ -174,7 +174,7 @@ def train_color_predictor():
 
     color_predictor                         = ColorPredictor(
         latent_dim,
-        num_colors=11, 
+        num_colors=num_arc_colors, 
         hidden_dim=color_predictor_hidden_dim, 
         action_embedding_dim=action_embedding_dim
         ).to(device)

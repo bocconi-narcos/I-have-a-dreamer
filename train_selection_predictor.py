@@ -332,7 +332,7 @@ def train_selection_predictor():
         encoder_params=encoder_params
     ).to(device)
     color_predictor = ColorPredictor(latent_dim=latent_dim, 
-                                     num_colors=num_arc_colors - 1, 
+                                     num_colors=num_arc_colors, 
                                      hidden_dim=color_predictor_hidden_dim,
                                      action_embedding_dim=color_selection_dim).to(device)
 
@@ -397,8 +397,14 @@ def train_selection_predictor():
     patience = 10
     save_path = os.path.join('weights', 'best_model_selection_predictor.pth')
     os.makedirs('weights', exist_ok=True)
-    if WANDB_AVAILABLE:
-        wandb.init(project="selection_predictor", config=config)
+    wandb_available = WANDB_AVAILABLE
+    if wandb_available:
+        try:
+            wandb.init(project="selection_predictor", config=config, settings=wandb.Settings(init_timeout=180))
+        except Exception as e:
+            print(f"Wandb initialization failed: {e}")
+            print("Continuing without wandb logging...")
+            wandb_available = False
     
     print(f"\nStarting training for {num_epochs} epochs...")
     print(f"Device: {device}")
@@ -518,7 +524,7 @@ def train_selection_predictor():
             global_step += 1
             
             # Log training metrics every log_interval steps
-            if global_step % log_interval == 0 and WANDB_AVAILABLE:
+            if global_step % log_interval == 0 and wandb_available:
                 log_dict = {
                     'step': global_step,
                     'epoch': epoch + 1,
