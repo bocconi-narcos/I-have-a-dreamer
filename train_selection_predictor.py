@@ -176,9 +176,14 @@ def evaluate_selection_and_color_with_switches(selection_predictor, color_predic
                     reduction='mean'
                 )
                 selection_loss = mask_loss
-                sim_loss = torch.tensor(0.0)
-                std_loss = torch.tensor(0.0)
-                cov_loss = torch.tensor(0.0)
+                # For decoder loss, compute VICReg components for monitoring even if not used in loss
+                target_latent_mask = mask_encoder(selection_mask.long())
+                if use_vicreg:
+                    _, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+                else:
+                    sim_loss = torch.tensor(0.0)
+                    std_loss = torch.tensor(0.0)
+                    cov_loss = torch.tensor(0.0)
             else:
                 target_latent_mask = mask_encoder(selection_mask.long())
                 if use_vicreg:
@@ -475,9 +480,14 @@ def train_selection_predictor():
                     reduction='mean'
                 )
                 selection_loss = mask_loss
-                sim_loss = torch.tensor(0.0)
-                std_loss = torch.tensor(0.0)
-                cov_loss = torch.tensor(0.0)
+                # For decoder loss, compute VICReg components for monitoring even if not used in loss
+                target_latent_mask = mask_encoder(selection_mask.long())
+                if use_vicreg:
+                    _, sim_loss, std_loss, cov_loss = vicreg_loss_fn(pred_latent_mask, target_latent_mask)
+                else:
+                    sim_loss = torch.tensor(0.0)
+                    std_loss = torch.tensor(0.0)
+                    cov_loss = torch.tensor(0.0)
             else:
                 target_latent_mask = mask_encoder(selection_mask.long())
                 if use_vicreg:
@@ -507,15 +517,24 @@ def train_selection_predictor():
             
             # Log training metrics every log_interval steps
             if global_step % log_interval == 0 and WANDB_AVAILABLE:
+                # Debug VICReg components
+                sim_val = sim_loss.item() if isinstance(sim_loss, torch.Tensor) else sim_loss
+                std_val = std_loss.item() if isinstance(std_loss, torch.Tensor) else std_loss
+                cov_val = cov_loss.item() if isinstance(cov_loss, torch.Tensor) else cov_loss
+                
+                # Add debugging info for covariance loss
+                if cov_val >= 99.9:  # If covariance loss is hitting the clamp
+                    print(f"Warning: VICReg covariance loss is at maximum: {cov_val:.4f}")
+                
                 wandb.log({
                     'step': global_step,
                     'epoch': epoch + 1,
                     'train/selection_loss': selection_loss.item(),
                     'train/color_loss': color_loss.item(),
                     'train/total_loss': total_loss.item(),
-                    'train/vicreg_sim_loss': sim_loss.item() if isinstance(sim_loss, torch.Tensor) else sim_loss,
-                    'train/vicreg_std_loss': std_loss.item() if isinstance(std_loss, torch.Tensor) else std_loss,
-                    'train/vicreg_cov_loss': cov_loss.item() if isinstance(cov_loss, torch.Tensor) else cov_loss,
+                    'train/vicreg_sim_loss': sim_val,
+                    'train/vicreg_std_loss': std_val,
+                    'train/vicreg_cov_loss': cov_val,
                 })
             
             train_pbar.set_postfix({'Color Loss': f'{color_loss.item():.4f}', 'Selection Loss': f'{selection_loss.item():.4f}'})
@@ -527,7 +546,8 @@ def train_selection_predictor():
         avg_color_loss = total_color_loss / len(train_loader.dataset)
         print(f"Epoch {epoch+1}/{num_epochs} | Train Sel: {avg_selection_loss:.4f} | Train Col: {avg_color_loss:.4f}")
         # print(f"[DEBUG] End of epoch {epoch+1}")
-                
+        
+        # Validation evaluation at end of epoch
         avg_selection_loss, avg_color_loss, color_accuracy, avg_val_sim_loss, avg_val_std_loss, avg_val_cov_loss = evaluate_selection_and_color_with_switches(
             selection_mask_predictor, color_predictor, state_encoder, mask_encoder, 
             colour_selection_embedder, selection_embedder, mask_decoder,
