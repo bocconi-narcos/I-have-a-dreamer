@@ -73,23 +73,23 @@ class VICRegLoss(nn.Module):
         # Calculate covariance loss (prevents redundant features) with numerical stability
         x_centered = x_proj - x_proj.mean(dim=0)
         cov_x = (x_centered.T @ x_centered) / max(x_proj.size(0) - 1, 1)
-        # Clamp covariance matrix to prevent explosions
-        cov_x = torch.clamp(cov_x, -100, 100)
+        # Clamp covariance matrix to prevent explosions - use tighter bounds
+        cov_x = torch.clamp(cov_x, -10, 10)
         cov_loss_x = (cov_x.fill_diagonal_(0).pow_(2).sum()) / \
             x_proj.size(1)  # Division by D (num features)
 
         y_centered = y_proj - y_proj.mean(dim=0)
         cov_y = (y_centered.T @ y_centered) / max(y_proj.size(0) - 1, 1)
-        # Clamp covariance matrix to prevent explosions
-        cov_y = torch.clamp(cov_y, -100, 100)
+        # Clamp covariance matrix to prevent explosions - use tighter bounds
+        cov_y = torch.clamp(cov_y, -10, 10)
         cov_loss_y = (cov_y.fill_diagonal_(0).pow_(2).sum()) / y_proj.size(1)
 
         cov_loss = self.cov_coeff * (cov_loss_x + cov_loss_y) * 0.5  # Average over x and y
 
-        # Clamp individual loss components to prevent explosions
+        # Clamp individual loss components to prevent explosions - use more reasonable bounds
         sim_loss = torch.clamp(sim_loss, 0, 1000)
         std_loss = torch.clamp(std_loss, 0, 100)
-        cov_loss = torch.clamp(cov_loss, 0, 100)
+        cov_loss = torch.clamp(cov_loss, 0, 10)  # Much lower bound for covariance loss
 
         total_loss = sim_loss + std_loss + cov_loss
         return total_loss, sim_loss, std_loss, cov_loss
@@ -110,21 +110,21 @@ class VICRegLoss(nn.Module):
         z_centered = z_proj - z_proj.mean(dim=0)
         cov_z = (z_centered.T @ z_centered) / max(z_proj.size(0) - 1, 1)
         
-        # Clamp covariance matrix to prevent explosions
-        cov_z = torch.clamp(cov_z, -100, 100)
+        # Clamp covariance matrix to prevent explosions - use tighter bounds
+        cov_z = torch.clamp(cov_z, -10, 10)
         cov_loss_val = (cov_z.fill_diagonal_(0).pow_(2).sum()) / z_proj.size(1)
 
         # Check for extreme values and warn
-        if cov_loss_val > 1e6:
-            print(f'Warning: cov_loss_val is extremely high: {cov_loss_val:.2e}')
+        if cov_loss_val > 100:
+            print(f'Warning: cov_loss_val is high: {cov_loss_val:.2e}')
             print(f'z_proj stats - mean: {z_proj.mean():.4f}, std: {z_proj.std():.4f}')
             print(f'cov_z max abs value: {cov_z.abs().max():.4f}')
             # Emergency clamp
-            cov_loss_val = torch.clamp(cov_loss_val, 0, 1e6)
+            cov_loss_val = torch.clamp(cov_loss_val, 0, 100)
 
-        # Clamp loss components to prevent explosions
+        # Clamp loss components to prevent explosions - use more reasonable bounds
         std_loss_val = torch.clamp(std_loss_val, 0, 100)
-        cov_loss_val = torch.clamp(cov_loss_val, 0, 100)
+        cov_loss_val = torch.clamp(cov_loss_val, 0, 10)  # Much lower bound for covariance loss
 
         weighted_std_loss = self.std_coeff * std_loss_val
         weighted_cov_loss = self.cov_coeff * cov_loss_val
