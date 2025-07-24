@@ -569,6 +569,7 @@ def train_selection_predictor():
                 'val/selection_loss': avg_selection_loss,
                 'val/color_loss': avg_color_loss,
                 'val/color_accuracy': color_accuracy,
+                'val/total_loss': avg_selection_loss + avg_color_loss,
             }
             
             # Only log VICReg components if VICReg is being used
