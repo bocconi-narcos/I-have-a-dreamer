@@ -38,8 +38,20 @@ def calculate_r2_score(y_true, y_pred):
     # Calculate residual sum of squares (RSS)
     rss = torch.sum((y_true - y_pred) ** 2)
     
+    # Handle edge cases
+    if tss == 0:
+        # If TSS is 0, all true values are the same
+        if rss == 0:
+            return 1.0  # Perfect prediction
+        else:
+            return 0.0  # No predictive power
+    
     # Calculate R²
     r2 = 1 - (rss / tss)
+    
+    # Handle numerical issues
+    if torch.isnan(r2) or torch.isinf(r2):
+        return 0.0
     
     return r2.item()
 
@@ -144,6 +156,11 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     all_targets = torch.cat(all_targets, dim=0)
     r2_score = calculate_r2_score(all_targets, all_predictions)
     
+    # Debug: Print validation statistics
+    print(f"Validation stats - Predictions: min={all_predictions.min():.4f}, max={all_predictions.max():.4f}, mean={all_predictions.mean():.4f}")
+    print(f"Validation stats - Targets: min={all_targets.min():.4f}, max={all_targets.max():.4f}, mean={all_targets.mean():.4f}")
+    print(f"Validation R² calculation: {r2_score:.4f}")
+    
     return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score
 
 def train_reward_predictor():
@@ -155,7 +172,13 @@ def train_reward_predictor():
     
     # Initialize wandb
     wandb_config = config.copy()
-    wandb.init(project="reward-predictor", config=wandb_config)
+    try:
+        wandb.init(project="reward-predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
+        print("Wandb initialized successfully!")
+    except Exception as e:
+        print(f"Wandb initialization failed: {e}")
+        print("Continuing without wandb logging...")
+        wandb = None
     
     # Buffer setup with fast tensor mode
     buffer_path = config['buffer_path']
@@ -420,7 +443,7 @@ def train_reward_predictor():
             total_samples += state.size(0)
 
             # Log batch metrics every log_interval steps
-            if global_step % log_interval == 0:
+            if global_step % log_interval == 0 and wandb is not None:
                 wandb.log({
                     "step": global_step,
                     "epoch": epoch + 1,
@@ -440,6 +463,11 @@ def train_reward_predictor():
         train_predictions = torch.cat(train_predictions, dim=0)
         train_targets = torch.cat(train_targets, dim=0)
         train_r2 = calculate_r2_score(train_targets, train_predictions)
+        
+        # Debug: Print some statistics
+        print(f"Training stats - Predictions: min={train_predictions.min():.4f}, max={train_predictions.max():.4f}, mean={train_predictions.mean():.4f}")
+        print(f"Training stats - Targets: min={train_targets.min():.4f}, max={train_targets.max():.4f}, mean={train_targets.mean():.4f}")
+        print(f"Training R² calculation: {train_r2:.4f}")
 
         # Evaluate on validation set
         val_reward_mse, val_reward_mae, val_r2 = evaluate_reward_predictor(
@@ -453,17 +481,21 @@ def train_reward_predictor():
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
         # Log validation metrics to wandb
-        wandb.log({
-            "step": global_step,
-            "epoch": epoch + 1,
-            "train_reward_mse": avg_reward_mse,
-            "train_reward_mae": avg_reward_mae,
-            "train_reward_r2": train_r2,
-            "val_reward_mse": val_reward_mse,
-            "val_reward_mae": val_reward_mae,
-            "val_reward_r2": val_r2,
-            "learning_rate": optimizer.param_groups[0]['lr']
-        })
+        if wandb is not None:
+            wandb.log({
+                "step": global_step,
+                "epoch": epoch + 1,
+                "train_reward_mse": avg_reward_mse,
+                "train_reward_mae": avg_reward_mae,
+                "train_reward_r2": train_r2,
+                "val_reward_mse": val_reward_mse,
+                "val_reward_mae": val_reward_mae,
+                "val_reward_r2": val_r2,
+                "learning_rate": optimizer.param_groups[0]['lr']
+            })
+            print(f"Logged metrics to wandb - Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+        else:
+            print(f"Wandb not available - Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
         # Save best model
         if val_reward_mse < best_val_loss:
@@ -486,7 +518,8 @@ def train_reward_predictor():
             print(f"Early stopping at epoch {epoch+1} due to no improvement in validation MSE for {patience} epochs.")
             break
 
-    wandb.finish()
+    if wandb is not None:
+        wandb.finish()
     print("Training completed!")
 
 if __name__ == "__main__":
