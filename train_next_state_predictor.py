@@ -505,6 +505,10 @@ def train_next_state_predictor():
     patience = 10
     save_path = os.path.join('weights', 'best_model_next_state_predictor.pth')
     os.makedirs('weights', exist_ok=True)
+    
+    # Track global step for proper logging
+    global_step = 0
+    
     for epoch in range(num_epochs):
         state_encoder.train()
         color_predictor.train()
@@ -677,6 +681,7 @@ def train_next_state_predictor():
                 grad_params += list(state_decoder.parameters()) + list(mask_decoder.parameters())
             torch.nn.utils.clip_grad_norm_(grad_params, max_norm=1.0)
             optimizer.step()
+            global_step += 1
 
             # EMA update for target encoder
             update_ema(target_encoder, state_encoder, decay=0.995)
@@ -686,15 +691,16 @@ def train_next_state_predictor():
             total_next_state_loss += next_state_loss.item() * state.size(0)
             total_reward_loss += reward_loss.item() * state.size(0)
 
-            if (i + 1) % log_interval == 0:
+            # Log training metrics every log_interval steps
+            if global_step % log_interval == 0:
                 wandb.log({  # type: ignore
+                    "step": global_step,
+                    "epoch": epoch + 1,
                     "batch_color_loss": color_loss.item(),
                     "batch_selection_loss": selection_loss.item(),
                     "batch_next_state_loss": next_state_loss.item(),
                     "batch_reward_loss": reward_loss.item(),
                     "batch_total_loss": total_loss.item(),
-                    "epoch": epoch + 1,
-                    "batch": i + 1
                 })
 
         num_train_samples = sum(batch['state'].size(0) for batch in train_loader)
@@ -751,6 +757,7 @@ def train_next_state_predictor():
         print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Train Reward Loss: {avg_reward_loss:.4f} | Train Total Loss: {avg_total_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Reward Loss: {val_reward_loss:.4f} | Val Color Acc: {val_color_acc:.4f} | Val Total Loss: {val_total_loss:.4f}")
         # --- WANDB LOGGING FOR EPOCH ---
         wandb.log({  # type: ignore
+            "step": global_step,
             "epoch": epoch + 1,
             "train_color_loss": avg_color_loss,
             "train_selection_loss": avg_selection_loss,
@@ -769,7 +776,7 @@ def train_next_state_predictor():
         # Log per-class accuracies separately
         if val_color_class_acc is not None:
             for i, acc in enumerate(val_color_class_acc):
-                wandb.log({f"val_color_class_{i}_acc": acc})  # type: ignore
+                wandb.log({f"val_color_class_{i}_acc": acc, "step": global_step})  # type: ignore
 
         if val_total_loss < best_val_loss:
             best_val_loss = val_total_loss
