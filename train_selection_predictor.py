@@ -398,6 +398,8 @@ def train_selection_predictor():
     print(f"Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
     print("-" * 80)
     
+    # Track global step for proper logging
+    global_step = 0
     # print("[DEBUG] Before epoch loop")
     epoch_pbar = tqdm(range(num_epochs), desc='Training Progress', ncols=120)
     for epoch in epoch_pbar:
@@ -501,6 +503,21 @@ def train_selection_predictor():
                 max_norm=1.0
             )
             optimizer.step()
+            global_step += 1
+            
+            # Log training metrics every log_interval steps
+            if global_step % log_interval == 0 and WANDB_AVAILABLE:
+                wandb.log({
+                    'step': global_step,
+                    'epoch': epoch + 1,
+                    'train/selection_loss': selection_loss.item(),
+                    'train/color_loss': color_loss.item(),
+                    'train/total_loss': total_loss.item(),
+                    'train/vicreg_sim_loss': sim_loss.item() if isinstance(sim_loss, torch.Tensor) else sim_loss,
+                    'train/vicreg_std_loss': std_loss.item() if isinstance(std_loss, torch.Tensor) else std_loss,
+                    'train/vicreg_cov_loss': cov_loss.item() if isinstance(cov_loss, torch.Tensor) else cov_loss,
+                })
+            
             train_pbar.set_postfix({'Color Loss': f'{color_loss.item():.4f}', 'Selection Loss': f'{selection_loss.item():.4f}'})
         train_pbar.close()
         # print(f"[DEBUG] Finished all batches for epoch {epoch+1}")
@@ -516,15 +533,11 @@ def train_selection_predictor():
             colour_selection_embedder, selection_embedder, mask_decoder,
             val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, use_vicreg, vicreg_loss_fn, mse_loss_fn, use_ground_truth, use_decoder_loss, num_arc_colors)
         
-        # Log to wandb
+        # Log validation metrics to wandb
         if WANDB_AVAILABLE:
             wandb.log({
+                'step': global_step,
                 'epoch': epoch + 1,
-                'train/selection_loss': avg_selection_loss,
-                'train/color_loss': avg_color_loss,
-                'train/vicreg_sim_loss': avg_val_sim_loss,
-                'train/vicreg_std_loss': avg_val_std_loss,
-                'train/vicreg_cov_loss': avg_val_cov_loss,
                 'val/selection_loss': avg_selection_loss,
                 'val/color_loss': avg_color_loss,
                 'val/color_accuracy': color_accuracy,
