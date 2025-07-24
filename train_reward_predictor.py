@@ -265,6 +265,9 @@ def train_reward_predictor():
     print(f"  - Early stopping patience: {patience}")
     print(f"  - Cosine annealing scheduler")
     
+    # Track global step for proper logging
+    global_step = 0
+    
     for epoch in range(num_epochs):
         state_encoder.train()
         reward_predictor.train()
@@ -358,6 +361,7 @@ def train_reward_predictor():
                 )
             
             optimizer.step()
+            global_step += 1
 
             # EMA update for target encoder
             with torch.no_grad():
@@ -369,14 +373,14 @@ def train_reward_predictor():
             total_reward_mae += reward_mae.item() * state.size(0)
             total_samples += state.size(0)
 
-            # Log batch metrics
-            if (i + 1) % log_interval == 0:
+            # Log batch metrics every log_interval steps
+            if global_step % log_interval == 0:
                 wandb.log({
+                    "step": global_step,
+                    "epoch": epoch + 1,
                     "batch_reward_mse": reward_mse.item(),
                     "batch_reward_mae": reward_mae.item(),
                     "learning_rate": optimizer.param_groups[0]['lr'],
-                    "epoch": epoch + 1,
-                    "batch": i + 1
                 })
 
         # Update learning rate
@@ -397,8 +401,9 @@ def train_reward_predictor():
         print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
-        # Log to wandb
+        # Log validation metrics to wandb
         wandb.log({
+            "step": global_step,
             "epoch": epoch + 1,
             "train_reward_mse": avg_reward_mse,
             "train_reward_mae": avg_reward_mae,
