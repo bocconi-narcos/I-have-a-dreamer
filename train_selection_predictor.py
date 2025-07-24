@@ -286,6 +286,8 @@ def train_selection_predictor():
     vicreg_std_coeff = selection_cfg['vicreg_std_coeff']
     vicreg_cov_coeff = selection_cfg['vicreg_cov_coeff']
     
+    print(f"  - Use VICReg loss: {use_vicreg}")
+    
     # Training parameters
     batch_size = config['batch_size']
     num_epochs = config['num_epochs']
@@ -517,25 +519,31 @@ def train_selection_predictor():
             
             # Log training metrics every log_interval steps
             if global_step % log_interval == 0 and WANDB_AVAILABLE:
-                # Debug VICReg components
-                sim_val = sim_loss.item() if isinstance(sim_loss, torch.Tensor) else sim_loss
-                std_val = std_loss.item() if isinstance(std_loss, torch.Tensor) else std_loss
-                cov_val = cov_loss.item() if isinstance(cov_loss, torch.Tensor) else cov_loss
-                
-                # Add debugging info for covariance loss
-                if cov_val >= 99.9:  # If covariance loss is hitting the clamp
-                    print(f"Warning: VICReg covariance loss is at maximum: {cov_val:.4f}")
-                
-                wandb.log({
+                log_dict = {
                     'step': global_step,
                     'epoch': epoch + 1,
                     'train/selection_loss': selection_loss.item(),
                     'train/color_loss': color_loss.item(),
                     'train/total_loss': total_loss.item(),
-                    'train/vicreg_sim_loss': sim_val,
-                    'train/vicreg_std_loss': std_val,
-                    'train/vicreg_cov_loss': cov_val,
-                })
+                }
+                
+                # Only log VICReg components if VICReg is being used
+                if use_vicreg:
+                    sim_val = sim_loss.item() if isinstance(sim_loss, torch.Tensor) else sim_loss
+                    std_val = std_loss.item() if isinstance(std_loss, torch.Tensor) else std_loss
+                    cov_val = cov_loss.item() if isinstance(cov_loss, torch.Tensor) else cov_loss
+                    
+                    # Add debugging info for covariance loss
+                    if cov_val >= 99.9:  # If covariance loss is hitting the clamp
+                        print(f"Warning: VICReg covariance loss is at maximum: {cov_val:.4f}")
+                    
+                    log_dict.update({
+                        'train/vicreg_sim_loss': sim_val,
+                        'train/vicreg_std_loss': std_val,
+                        'train/vicreg_cov_loss': cov_val,
+                    })
+                
+                wandb.log(log_dict)
             
             train_pbar.set_postfix({'Color Loss': f'{color_loss.item():.4f}', 'Selection Loss': f'{selection_loss.item():.4f}'})
         train_pbar.close()
@@ -555,16 +563,23 @@ def train_selection_predictor():
         
         # Log validation metrics to wandb
         if WANDB_AVAILABLE:
-            wandb.log({
+            log_dict = {
                 'step': global_step,
                 'epoch': epoch + 1,
                 'val/selection_loss': avg_selection_loss,
                 'val/color_loss': avg_color_loss,
                 'val/color_accuracy': color_accuracy,
-                'val/vicreg_sim_loss': avg_val_sim_loss,
-                'val/vicreg_std_loss': avg_val_std_loss,
-                'val/vicreg_cov_loss': avg_val_cov_loss
-            })
+            }
+            
+            # Only log VICReg components if VICReg is being used
+            if use_vicreg:
+                log_dict.update({
+                    'val/vicreg_sim_loss': avg_val_sim_loss,
+                    'val/vicreg_std_loss': avg_val_std_loss,
+                    'val/vicreg_cov_loss': avg_val_cov_loss
+                })
+            
+            wandb.log(log_dict)
         
         # Update epoch progress bar
         epoch_pbar.set_postfix({
