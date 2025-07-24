@@ -18,6 +18,31 @@ def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
+def calculate_r2_score(y_true, y_pred):
+    """
+    Calculate R-squared (R²) score.
+    
+    Args:
+        y_true: Ground truth values
+        y_pred: Predicted values
+        
+    Returns:
+        R² score (float)
+    """
+    # Calculate mean of true values
+    y_mean = torch.mean(y_true)
+    
+    # Calculate total sum of squares (TSS)
+    tss = torch.sum((y_true - y_mean) ** 2)
+    
+    # Calculate residual sum of squares (RSS)
+    rss = torch.sum((y_true - y_pred) ** 2)
+    
+    # Calculate R²
+    r2 = 1 - (rss / tss)
+    
+    return r2.item()
+
 def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, dataloader, device, reward_criterion):
     """Evaluate the reward predictor on validation data."""
     reward_predictor.eval()
@@ -27,6 +52,10 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     total_reward_mse = 0
     total_reward_mae = 0
     total_samples = 0
+    
+    # For R² calculation, we need to collect all predictions and targets
+    all_predictions = []
+    all_targets = []
     
     with torch.no_grad():
         for batch in dataloader:
@@ -101,12 +130,21 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
             reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)
             reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)
             
+            # Collect predictions and targets for R² calculation
+            all_predictions.append(pred_reward.squeeze(-1))
+            all_targets.append(reward)
+            
             # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
             total_reward_mae += reward_mae.item() * state.size(0)
             total_samples += state.size(0)
     
-    return total_reward_mse / total_samples, total_reward_mae / total_samples
+    # Calculate R² score
+    all_predictions = torch.cat(all_predictions, dim=0)
+    all_targets = torch.cat(all_targets, dim=0)
+    r2_score = calculate_r2_score(all_targets, all_predictions)
+    
+    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score
 
 def train_reward_predictor():
     """
@@ -275,6 +313,10 @@ def train_reward_predictor():
         total_reward_mae = 0
         total_samples = 0
         
+        # For R² calculation during training
+        train_predictions = []
+        train_targets = []
+        
         for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
             # Current state
             state = batch['state'].to(device)
@@ -368,6 +410,10 @@ def train_reward_predictor():
                 for target_param, source_param in zip(target_encoder.parameters(), state_encoder.parameters()):
                     target_param.data.mul_(0.995).add_(source_param.data, alpha=1 - 0.995)
 
+            # Collect predictions and targets for R² calculation
+            train_predictions.append(pred_reward.squeeze(-1).detach())
+            train_targets.append(reward)
+
             # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
             total_reward_mae += reward_mae.item() * state.size(0)
@@ -389,16 +435,21 @@ def train_reward_predictor():
         # Compute average training metrics
         avg_reward_mse = total_reward_mse / total_samples
         avg_reward_mae = total_reward_mae / total_samples
+        
+        # Calculate R² for training data
+        train_predictions = torch.cat(train_predictions, dim=0)
+        train_targets = torch.cat(train_targets, dim=0)
+        train_r2 = calculate_r2_score(train_targets, train_predictions)
 
         # Evaluate on validation set
-        val_reward_mse, val_reward_mae = evaluate_reward_predictor(
+        val_reward_mse, val_reward_mae, val_r2 = evaluate_reward_predictor(
             reward_predictor, state_encoder, target_encoder, val_loader, device, reward_criterion
         )
 
         # Print epoch results
         print(f"Epoch {epoch+1}/{num_epochs}")
-        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}")
-        print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}")
+        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, R²: {train_r2:.4f}")
+        print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}, R²: {val_r2:.4f}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
         # Log validation metrics to wandb
@@ -407,8 +458,10 @@ def train_reward_predictor():
             "epoch": epoch + 1,
             "train_reward_mse": avg_reward_mse,
             "train_reward_mae": avg_reward_mae,
+            "train_reward_r2": train_r2,
             "val_reward_mse": val_reward_mse,
             "val_reward_mae": val_reward_mae,
+            "val_reward_r2": val_r2,
             "learning_rate": optimizer.param_groups[0]['lr']
         })
 
