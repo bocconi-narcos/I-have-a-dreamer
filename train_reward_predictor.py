@@ -103,6 +103,75 @@ def create_reward_prediction_plot(y_true, y_pred, title="True vs Predicted Rewar
     plt.tight_layout()
     return fig
 
+def create_and_save_subset_plot(y_true, y_pred, subset_size=3000, filename="reward_prediction_subset.png"):
+    """
+    Create a scatter plot with a subset of points and save it locally.
+    
+    Args:
+        y_true: Ground truth rewards
+        y_pred: Predicted rewards
+        subset_size: Number of points to plot (default: 3000)
+        filename: Output filename (default: "reward_prediction_subset.png")
+    """
+    # Convert to numpy arrays if they're tensors
+    if torch.is_tensor(y_true):
+        y_true = y_true.cpu().numpy()
+    if torch.is_tensor(y_pred):
+        y_pred = y_pred.cpu().numpy()
+    
+    # Randomly sample subset of points
+    total_points = len(y_true)
+    if subset_size >= total_points:
+        print(f"Warning: subset_size ({subset_size}) >= total_points ({total_points}). Using all points.")
+        subset_size = total_points
+    
+    # Create random indices for subset
+    np.random.seed(42)  # For reproducible sampling
+    subset_indices = np.random.choice(total_points, subset_size, replace=False)
+    
+    # Sample the data
+    y_true_subset = y_true[subset_indices]
+    y_pred_subset = y_pred[subset_indices]
+    
+    # Create the plot
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Scatter plot with subset
+    scatter = ax.scatter(y_true_subset, y_pred_subset, alpha=0.7, s=30, c='blue', edgecolors='black', linewidth=0.5)
+    
+    # Add perfect prediction line (y=x)
+    min_val = min(y_true_subset.min(), y_pred_subset.min())
+    max_val = max(y_true_subset.max(), y_pred_subset.max())
+    ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=3, label='Perfect Prediction')
+    
+    # Add labels and title
+    ax.set_xlabel('True Rewards', fontsize=14)
+    ax.set_ylabel('Predicted Rewards', fontsize=14)
+    ax.set_title(f'Reward Prediction: {subset_size} Random Samples\n(Total: {total_points:,} points)', fontsize=16)
+    ax.legend(fontsize=12)
+    ax.grid(True, alpha=0.3)
+    
+    # Add R² value to the plot (calculated on subset)
+    r2_subset = calculate_r2_score(torch.tensor(y_true_subset), torch.tensor(y_pred_subset))
+    r2_full = calculate_r2_score(torch.tensor(y_true), torch.tensor(y_pred))
+    
+    # Add text box with statistics
+    stats_text = f'Subset R² = {r2_subset:.4f}\nFull Dataset R² = {r2_full:.4f}\nPoints shown: {subset_size:,}/{total_points:,}'
+    ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.9),
+            fontsize=11, verticalalignment='top')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"Plot saved as '{filename}'")
+    print(f"Showed {subset_size:,} random points out of {total_points:,} total points")
+    print(f"Subset R²: {r2_subset:.4f}, Full dataset R²: {r2_full:.4f}")
+    
+    plt.close()  # Close to free memory
+    return fig
+
 def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, dataloader, device, reward_criterion):
     """Evaluate the reward predictor on validation data."""
     reward_predictor.eval()
@@ -216,6 +285,9 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     
     # Create reward prediction plot
     reward_plot = create_reward_prediction_plot(all_targets, all_predictions, "Validation: True vs Predicted Rewards")
+    
+    # Also create and save a subset plot locally
+    create_and_save_subset_plot(all_targets, all_predictions, subset_size=3000, filename="reward_prediction_subset.png")
     
     return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats, reward_plot
 
