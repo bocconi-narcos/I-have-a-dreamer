@@ -523,9 +523,9 @@ def train_reward_predictor():
             
             print(f"Logging to wandb: {log_dict}")
             wandb.log(log_dict)
-            print(f"Successfully logged metrics to wandb - Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Successfully logged metrics to wandb - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
         else:
-            print(f"Wandb not available - Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Wandb not available - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
         # Save best model
         if val_reward_mse < best_val_loss:
@@ -538,8 +538,7 @@ def train_reward_predictor():
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
                 'epoch': epoch + 1,
-                'best_val_loss': best_val_loss,
-                'config': config
+                'best_val_loss': best_val_loss
             }, save_path)
             print(f"New best model saved to {save_path}")
         else:
