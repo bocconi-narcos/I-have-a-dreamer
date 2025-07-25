@@ -381,6 +381,8 @@ def train_reward_predictor():
     print(f"  - Cosine annealing scheduler")
     
     # Track global step for proper logging
+    # Step = number of batch updates completed (increments every batch)
+    # This provides a continuous timeline across all epochs
     global_step = 0
     
     for epoch in range(num_epochs):
@@ -516,6 +518,7 @@ def train_reward_predictor():
                 wandb.log({
                     "step": global_step,
                     "epoch": epoch + 1,
+                    "batch": i + 1,  # Current batch number within epoch
                     "batch_reward_mse": reward_mse.item(),
                     "batch_reward_mae": reward_mae.item(),
                     "batch_reward_r2": batch_r2,
