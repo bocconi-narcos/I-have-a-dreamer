@@ -335,6 +335,7 @@ def train_reward_predictor():
         reward_predictor.train()
         total_reward_mse = 0
         total_reward_mae = 0
+        total_reward_r2 = 0  # Track accumulated batch R² values
         total_samples = 0
         
         # For R² calculation during training
@@ -438,15 +439,17 @@ def train_reward_predictor():
             train_predictions.append(pred_reward.squeeze(-1).detach())
             train_targets.append(reward)
 
+            # Calculate batch R²
+            batch_r2 = calculate_r2_score(reward, pred_reward.squeeze(-1))
+            
             # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
             total_reward_mae += reward_mae.item() * state.size(0)
+            total_reward_r2 += batch_r2 * state.size(0)  # Accumulate batch R² values
             total_samples += state.size(0)
 
             # Log batch metrics every log_interval steps
             if global_step % log_interval == 0 and wandb_available:
-                # Calculate batch R² for debugging
-                batch_r2 = calculate_r2_score(reward, pred_reward.squeeze(-1))
                 wandb.log({
                     "step": global_step,
                     "epoch": epoch + 1,
@@ -463,8 +466,9 @@ def train_reward_predictor():
         # Compute average training metrics
         avg_reward_mse = total_reward_mse / total_samples
         avg_reward_mae = total_reward_mae / total_samples
+        avg_reward_r2 = total_reward_r2 / total_samples  # Average batch R² for the epoch
         
-        # Calculate R² for training data
+        # Calculate R² for training data (using all predictions vs targets)
         train_predictions = torch.cat(train_predictions, dim=0)
         train_targets = torch.cat(train_targets, dim=0)
         train_r2 = calculate_r2_score(train_targets, train_predictions)
@@ -481,7 +485,7 @@ def train_reward_predictor():
 
         # Print epoch results
         print(f"Epoch {epoch+1}/{num_epochs}")
-        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, R²: {train_r2:.4f}")
+        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}")
         print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}, R²: {val_r2:.4f}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
@@ -492,7 +496,8 @@ def train_reward_predictor():
                 "epoch": epoch + 1,
                 "train_reward_mse": avg_reward_mse,
                 "train_reward_mae": avg_reward_mae,
-                "train_reward_r2": train_r2,
+                "train_reward_r2_avg_batch": avg_reward_r2,  # Average of batch R² values
+                "train_reward_r2_overall": train_r2,         # Overall R² using all predictions
                 "val_reward_mse": val_reward_mse,
                 "val_reward_mae": val_reward_mae,
                 "val_reward_r2": val_r2,
@@ -500,9 +505,9 @@ def train_reward_predictor():
             }
             print(f"Logging to wandb: {log_dict}")
             wandb.log(log_dict)
-            print(f"Successfully logged metrics to wandb - Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Successfully logged metrics to wandb - Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
         else:
-            print(f"Wandb not available - Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Wandb not available - Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
         # Save best model
         if val_reward_mse < best_val_loss:
