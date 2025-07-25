@@ -522,7 +522,8 @@ def train_reward_predictor():
                     "batch_loss": loss.item(),
                     "learning_rate": optimizer.param_groups[0]['lr'],
                 })
-                print(f"Batch {global_step} - MSE: {reward_mse.item():.4f}, MAE: {reward_mae.item():.4f}, R²: {batch_r2:.4f}, Loss: {loss.item():.4f}")
+                # Use tqdm.write to avoid interfering with the progress bar
+                # tqdm.write(f"Batch {global_step} - MSE: {reward_mse.item():.4f}, MAE: {reward_mae.item():.4f}, R²: {batch_r2:.4f}, Loss: {loss.item():.4f}")
 
         # Compute average training metrics
         avg_reward_mse = total_reward_mse / total_samples
