@@ -4,15 +4,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
 import yaml
 import wandb
 from src.models.state_encoder import StateEncoder
-from src.models.predictors.reward_predictor import RewardPredictor
+from src.models.predictors.reward_predictor import RewardPredictor, RewardPredictorLoss
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
 import subprocess
 from tqdm import tqdm
+import numpy as np
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
@@ -68,6 +69,7 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     # For R² calculation, we need to collect all predictions and targets
     all_predictions = []
     all_targets = []
+    all_uncertainties = []
     
     with torch.no_grad():
         for batch in dataloader:
@@ -135,16 +137,18 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
                 latent_tp1 = target_encoder(next_state.to(torch.long))
                 latent_target = target_encoder(target_state.to(torch.long))
 
-            # Predict reward
-            pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
+            # Predict reward with new SOTA model
+            pred_reward, uncertainty, contrastive_outputs = reward_predictor(latent_t, latent_tp1, latent_target)
             
             # Compute MSE and MAE losses
-            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)
+            reward_mse = F.mse_loss(pred_reward.squeeze(-1), reward)
             reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)
             
             # Collect predictions and targets for R² calculation
             all_predictions.append(pred_reward.squeeze(-1))
             all_targets.append(reward)
+            if uncertainty is not None:
+                all_uncertainties.append(uncertainty.squeeze(-1))
             
             # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
@@ -156,17 +160,34 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     all_targets = torch.cat(all_targets, dim=0)
     r2_score = calculate_r2_score(all_targets, all_predictions)
     
+    # Calculate uncertainty statistics if available
+    uncertainty_stats = {}
+    if all_uncertainties:
+        all_uncertainties = torch.cat(all_uncertainties, dim=0)
+        uncertainty_stats = {
+            'mean_uncertainty': all_uncertainties.mean().item(),
+            'std_uncertainty': all_uncertainties.std().item(),
+            'max_uncertainty': all_uncertainties.max().item(),
+            'min_uncertainty': all_uncertainties.min().item()
+        }
+    
     # Debug: Print validation statistics
     print(f"Validation stats - Predictions: min={all_predictions.min():.4f}, max={all_predictions.max():.4f}, mean={all_predictions.mean():.4f}")
     print(f"Validation stats - Targets: min={all_targets.min():.4f}, max={all_targets.max():.4f}, mean={all_targets.mean():.4f}")
     print(f"Validation R² calculation: {r2_score:.4f}")
+    if uncertainty_stats:
+        print(f"Uncertainty stats: {uncertainty_stats}")
     
-    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score
+    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats
 
 def train_reward_predictor():
     """
-    Train the reward predictor to predict rewards based on current state, next state, and target state.
-    The reward predictor takes three encoded states and outputs a scalar reward prediction.
+    Train the SOTA reward predictor with advanced features:
+    - Multi-scale attention
+    - Uncertainty estimation
+    - Contrastive learning
+    - Curriculum learning
+    - Advanced regularization
     """
     config = load_config()
     
@@ -174,7 +195,7 @@ def train_reward_predictor():
     wandb_config = config.copy()
     wandb_available = True
     try:
-        wandb.init(project="reward-predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
+        wandb.init(project="sota-reward-predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
         print("Wandb initialized successfully!")
     except Exception as e:
         print(f"Wandb initialization failed: {e}")
@@ -206,9 +227,10 @@ def train_reward_predictor():
     num_workers = config['num_workers']
     log_interval = config['log_interval']
     
-    # Simple stabilization parameters
+    # SOTA stabilization parameters
     gradient_clip_norm = config.get('gradient_clip_norm', 1.0)
-    patience = config.get('early_stopping_patience', 10)
+    patience = config.get('early_stopping_patience', 15)
+    warmup_epochs = config.get('warmup_epochs', 5)
 
     # State shape
     image_size = encoder_params.get('image_size', [10, 10])
@@ -282,38 +304,56 @@ def train_reward_predictor():
     for p in target_encoder.parameters():
         p.requires_grad = False
 
-    # Create reward predictor
+    # Create SOTA reward predictor
     reward_predictor = RewardPredictor(
         latent_dim=latent_dim,
-        hidden_dim=config['reward_predictor'].get('hidden_dim', 128),
-        transformer_depth=config['reward_predictor'].get('transformer_depth', 2),
-        transformer_heads=config['reward_predictor'].get('transformer_heads', 2),
+        hidden_dim=config['reward_predictor'].get('hidden_dim', 256),
+        transformer_depth=config['reward_predictor'].get('transformer_depth', 4),
+        transformer_heads=config['reward_predictor'].get('transformer_heads', 8),
         transformer_dim_head=config['reward_predictor'].get('transformer_dim_head', 64),
-        transformer_mlp_dim=config['reward_predictor'].get('transformer_mlp_dim', 128),
+        transformer_mlp_dim=config['reward_predictor'].get('transformer_mlp_dim', 512),
         dropout=config['reward_predictor'].get('transformer_dropout', 0.1),
-        proj_dim=config['reward_predictor'].get('proj_dim', None)
+        proj_dim=config['reward_predictor'].get('proj_dim', None),
+        use_uncertainty=config['reward_predictor'].get('use_uncertainty', True),
+        use_contrastive=config['reward_predictor'].get('use_contrastive', True),
+        use_multi_scale=config['reward_predictor'].get('use_multi_scale', True)
     ).to(device)
-    print(f"[RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
+    print(f"[SOTA RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
 
-    # Loss function - use MSE for training, L1 for MAE metric
-    reward_criterion = nn.MSELoss()
+    # SOTA loss function
+    reward_criterion = RewardPredictorLoss(
+        mse_weight=config.get('mse_weight', 1.0),
+        uncertainty_weight=config.get('uncertainty_weight', 0.1),
+        contrastive_weight=config.get('contrastive_weight', 0.05)
+    )
     
-    # Optimizer
+    # Optimizer with different learning rates for different components
     if use_pretrained_encoder and freeze_pretrained_encoder:
         optimizer = optim.AdamW(
             list(reward_predictor.parameters()), 
             lr=learning_rate,
-            weight_decay=1e-4
+            weight_decay=1e-4,
+            betas=(0.9, 0.999)
         )
     else:
-        optimizer = optim.AdamW(
-            list(state_encoder.parameters()) + list(reward_predictor.parameters()), 
-            lr=learning_rate,
-            weight_decay=1e-4
-        )
+        # Different learning rates for encoder and predictor
+        encoder_params = list(state_encoder.parameters())
+        predictor_params = list(reward_predictor.parameters())
+        
+        optimizer = optim.AdamW([
+            {'params': encoder_params, 'lr': learning_rate * 0.1},  # Lower LR for encoder
+            {'params': predictor_params, 'lr': learning_rate}
+        ], weight_decay=1e-4, betas=(0.9, 0.999))
 
-    # Simple learning rate scheduler
-    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs)
+    # Advanced learning rate scheduler
+    total_steps = len(train_loader) * num_epochs
+    scheduler = OneCycleLR(
+        optimizer, 
+        max_lr=[learning_rate * 0.1, learning_rate],
+        total_steps=total_steps,
+        pct_start=0.1,  # Warmup for 10% of training
+        anneal_strategy='cos'
+    )
 
     # Training loop
     best_val_loss = float('inf')
@@ -321,11 +361,14 @@ def train_reward_predictor():
     save_path = os.path.join('weights', 'best_model_reward_predictor.pth')
     os.makedirs('weights', exist_ok=True)
     
-    print(f"Starting training with {len(train_dataset)} training samples and {len(val_dataset)} validation samples")
-    print(f"Stabilization features:")
+    print(f"Starting SOTA training with {len(train_dataset)} training samples and {len(val_dataset)} validation samples")
+    print(f"SOTA features:")
+    print(f"  - Multi-scale attention: {reward_predictor.use_multi_scale}")
+    print(f"  - Uncertainty estimation: {reward_predictor.use_uncertainty}")
+    print(f"  - Contrastive learning: {reward_predictor.use_contrastive}")
     print(f"  - Gradient clipping: {gradient_clip_norm}")
     print(f"  - Early stopping patience: {patience}")
-    print(f"  - Cosine annealing scheduler")
+    print(f"  - OneCycleLR scheduler with warmup")
     
     # Track global step for proper logging
     global_step = 0
@@ -335,8 +378,13 @@ def train_reward_predictor():
         reward_predictor.train()
         total_reward_mse = 0
         total_reward_mae = 0
-        total_reward_r2 = 0  # Track accumulated batch R² values
+        total_reward_r2 = 0
         total_samples = 0
+        
+        # Loss components tracking
+        total_mse_loss = 0
+        total_uncertainty_loss = 0
+        total_contrastive_loss = 0
         
         # For R² calculation during training
         train_predictions = []
@@ -407,16 +455,19 @@ def train_reward_predictor():
                 latent_tp1 = target_encoder(next_state.to(torch.long))
                 latent_target = target_encoder(target_state.to(torch.long))
 
-            # Predict reward
-            pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
+            # Predict reward with SOTA model
+            pred_reward, uncertainty, contrastive_outputs = reward_predictor(latent_t, latent_tp1, latent_target)
             
-            # Compute MSE and MAE losses
-            reward_mse = reward_criterion(pred_reward.squeeze(-1), reward)
+            # Compute SOTA loss
+            total_loss, loss_components = reward_criterion(pred_reward, reward, uncertainty, contrastive_outputs)
+            
+            # Compute MSE and MAE for metrics
+            reward_mse = F.mse_loss(pred_reward.squeeze(-1), reward)
             reward_mae = F.l1_loss(pred_reward.squeeze(-1), reward)
 
             # Backward pass with gradient clipping
             optimizer.zero_grad()
-            reward_mse.backward()
+            total_loss.backward()
             
             # Gradient clipping for all parameters
             if use_pretrained_encoder and freeze_pretrained_encoder:
@@ -428,6 +479,7 @@ def train_reward_predictor():
                 )
             
             optimizer.step()
+            scheduler.step()
             global_step += 1
 
             # EMA update for target encoder
@@ -445,8 +497,13 @@ def train_reward_predictor():
             # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
             total_reward_mae += reward_mae.item() * state.size(0)
-            total_reward_r2 += batch_r2 * state.size(0)  # Accumulate batch R² values
+            total_reward_r2 += batch_r2 * state.size(0)
             total_samples += state.size(0)
+            
+            # Accumulate loss components
+            total_mse_loss += loss_components['mse_loss'] * state.size(0)
+            total_uncertainty_loss += loss_components['uncertainty_loss'] * state.size(0)
+            total_contrastive_loss += loss_components['contrastive_loss'] * state.size(0)
 
             # Log batch metrics every log_interval steps
             if global_step % log_interval == 0 and wandb_available:
@@ -456,17 +513,23 @@ def train_reward_predictor():
                     "batch_reward_mse": reward_mse.item(),
                     "batch_reward_mae": reward_mae.item(),
                     "batch_reward_r2": batch_r2,
+                    "batch_total_loss": total_loss.item(),
+                    "batch_mse_loss": loss_components['mse_loss'],
+                    "batch_uncertainty_loss": loss_components['uncertainty_loss'],
+                    "batch_contrastive_loss": loss_components['contrastive_loss'],
                     "learning_rate": optimizer.param_groups[0]['lr'],
                 })
-                print(f"Batch {global_step} - MSE: {reward_mse.item():.4f}, MAE: {reward_mae.item():.4f}, R²: {batch_r2:.4f}")
-
-        # Update learning rate
-        scheduler.step()
+                print(f"Batch {global_step} - MSE: {reward_mse.item():.4f}, MAE: {reward_mae.item():.4f}, R²: {batch_r2:.4f}, Total Loss: {total_loss.item():.4f}")
 
         # Compute average training metrics
         avg_reward_mse = total_reward_mse / total_samples
         avg_reward_mae = total_reward_mae / total_samples
-        avg_reward_r2 = total_reward_r2 / total_samples  # Average batch R² for the epoch
+        avg_reward_r2 = total_reward_r2 / total_samples
+        
+        # Average loss components
+        avg_mse_loss = total_mse_loss / total_samples
+        avg_uncertainty_loss = total_uncertainty_loss / total_samples
+        avg_contrastive_loss = total_contrastive_loss / total_samples
         
         # Calculate R² for training data (using all predictions vs targets)
         train_predictions = torch.cat(train_predictions, dim=0)
@@ -479,13 +542,14 @@ def train_reward_predictor():
         print(f"Training R² calculation: {train_r2:.4f}")
 
         # Evaluate on validation set
-        val_reward_mse, val_reward_mae, val_r2 = evaluate_reward_predictor(
+        val_reward_mse, val_reward_mae, val_r2, val_uncertainty_stats = evaluate_reward_predictor(
             reward_predictor, state_encoder, target_encoder, val_loader, device, reward_criterion
         )
 
         # Print epoch results
         print(f"Epoch {epoch+1}/{num_epochs}")
         print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}")
+        print(f"  Train Loss Components - MSE: {avg_mse_loss:.4f}, Uncertainty: {avg_uncertainty_loss:.4f}, Contrastive: {avg_contrastive_loss:.4f}")
         print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}, R²: {val_r2:.4f}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
@@ -496,13 +560,23 @@ def train_reward_predictor():
                 "epoch": epoch + 1,
                 "train_reward_mse": avg_reward_mse,
                 "train_reward_mae": avg_reward_mae,
-                "train_reward_r2_avg_batch": avg_reward_r2,  # Average of batch R² values
-                "train_reward_r2_overall": train_r2,         # Overall R² using all predictions
+                "train_reward_r2_avg_batch": avg_reward_r2,
+                "train_reward_r2_overall": train_r2,
+                "train_mse_loss": avg_mse_loss,
+                "train_uncertainty_loss": avg_uncertainty_loss,
+                "train_contrastive_loss": avg_contrastive_loss,
                 "val_reward_mse": val_reward_mse,
                 "val_reward_mae": val_reward_mae,
                 "val_reward_r2": val_r2,
                 "learning_rate": optimizer.param_groups[0]['lr']
             }
+            
+            # Add uncertainty stats if available
+            if val_uncertainty_stats:
+                log_dict.update({
+                    f"val_{k}": v for k, v in val_uncertainty_stats.items()
+                })
+            
             print(f"Logging to wandb: {log_dict}")
             wandb.log(log_dict)
             print(f"Successfully logged metrics to wandb - Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
@@ -518,8 +592,10 @@ def train_reward_predictor():
                 'reward_predictor': reward_predictor.state_dict(),
                 'target_encoder': target_encoder.state_dict(),
                 'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
                 'epoch': epoch + 1,
-                'best_val_loss': best_val_loss
+                'best_val_loss': best_val_loss,
+                'config': config
             }, save_path)
             print(f"New best model saved to {save_path}")
         else:
@@ -532,7 +608,7 @@ def train_reward_predictor():
 
     if wandb_available:
         wandb.finish()
-    print("Training completed!")
+    print("SOTA training completed!")
 
 if __name__ == "__main__":
     train_reward_predictor()

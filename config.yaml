@@ -96,16 +96,29 @@ next_state:
   vicreg_std_coeff: 25.0
   vicreg_cov_coeff: 1.0
 
-# Reward Predictor Module (Transformer-based)
+# Reward Predictor Module (SOTA Transformer-based)
 reward_predictor:
-  latent_dim: 128  # Dimension of latent vectors (z_t, z_{t+1})
-  hidden_dim: 128  # Hidden dimension for transformer
-  transformer_depth: 2
-  transformer_heads: 2
+  latent_dim: 128  # Dimension of latent vectors (z_t, z_{t+1}, z_target)
+  hidden_dim: 256  # Hidden dimension for transformer (increased from 128)
+  transformer_depth: 4  # Increased from 2
+  transformer_heads: 8  # Increased from 2
   transformer_dim_head: 64
-  transformer_mlp_dim: 128
+  transformer_mlp_dim: 512  # Increased from 128
   transformer_dropout: 0.1
   proj_dim: null  # If provided, project latents to this dim
+  
+  # SOTA Features
+  use_uncertainty: true  # Enable uncertainty estimation
+  use_contrastive: true  # Enable contrastive learning
+  use_multi_scale: true  # Enable multi-scale attention
+
+# SOTA Training Parameters
+mse_weight: 1.0  # Weight for main MSE loss
+uncertainty_weight: 0.1  # Weight for uncertainty loss
+contrastive_weight: 0.05  # Weight for contrastive loss
+gradient_clip_norm: 1.0  # Gradient clipping norm
+early_stopping_patience: 15  # Increased patience for better convergence
+warmup_epochs: 5  # Warmup epochs for learning rate scheduler
 
 # Decoder Parameters (used when use_decoder_loss is true)
 decoder_params:
@@ -168,5 +181,4 @@ full_model_training:
   best_model_save_path: "best_model_full_model.pth" 
 
 # Essential stabilization parameters for reward predictor
-gradient_clip_norm: 1.0
-early_stopping_patience: 10 
+# Note: These are now defined in the SOTA Training Parameters section above 
