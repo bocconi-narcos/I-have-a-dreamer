@@ -117,7 +117,7 @@ mse_weight: 1.0  # Weight for main MSE loss
 uncertainty_weight: 0.1  # Weight for uncertainty loss
 contrastive_weight: 0.05  # Weight for contrastive loss
 gradient_clip_norm: 1.0  # Gradient clipping norm
-early_stopping_patience: 15  # Increased patience for better convergence
+early_stopping_patience: 10  # Increased patience for better convergence
 warmup_epochs: 5  # Warmup epochs for learning rate scheduler
 
 # Decoder Parameters (used when use_decoder_loss is true)
