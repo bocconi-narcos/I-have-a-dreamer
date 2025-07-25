@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from torch.optim.lr_scheduler import CosineAnnealingLR, OneCycleLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import yaml
 import wandb
 from src.models.state_encoder import StateEncoder
@@ -13,7 +13,7 @@ from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
 import subprocess
 from tqdm import tqdm
-import numpy as np
+
 
 def load_config(config_path="config.yaml"):
     with open(config_path, "r") as f:
@@ -551,7 +551,7 @@ def train_reward_predictor():
 
     if wandb_available:
         wandb.finish()
-    print("SOTA training completed!")
+    print("Training completed!")
 
 if __name__ == "__main__":
     train_reward_predictor()
