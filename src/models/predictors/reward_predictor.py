@@ -118,7 +118,7 @@ class ImprovedRewardPredictor(nn.Module):
             # Residual connection
             if prev_dim != hidden_dim:
                 self.layers.append(nn.Linear(prev_dim, hidden_dim))
-        else:
+            else:
                 self.layers.append(nn.Identity())
             
             prev_dim = hidden_dim
