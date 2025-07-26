@@ -45,7 +45,7 @@ class SOTARewardPredictor(nn.Module):
         elif isinstance(module, nn.LayerNorm):
             nn.init.ones_(module.weight)
             nn.init.zeros_(module.bias)
-    
+        
     def forward(self, z_t, z_tp1, z_target):
         """
         Forward pass.
@@ -118,7 +118,7 @@ class ImprovedRewardPredictor(nn.Module):
             # Residual connection
             if prev_dim != hidden_dim:
                 self.layers.append(nn.Linear(prev_dim, hidden_dim))
-            else:
+        else:
                 self.layers.append(nn.Identity())
             
             prev_dim = hidden_dim
