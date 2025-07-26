@@ -629,7 +629,7 @@ def train_reward_predictor():
                 "train_reward_mse": avg_reward_mse,
                 "train_reward_mae": avg_reward_mae,
                 "train_reward_r2": train_r2,
-                "train_loss": avg_loss,
+                # "train_loss": avg_loss,
                 "val_reward_mse": val_reward_mse,
                 "val_reward_mae": val_reward_mae,
                 "val_reward_r2": val_r2,
