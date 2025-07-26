@@ -18,7 +18,7 @@ def inspect_states():
     
     # Buffer setup
     buffer_path = config['buffer_path']
-    fast_buffer_path = buffer_path + '.fast.pt'
+    fast_buffer_path = buffer_path
     
     # State shape
     encoder_params = config['encoder_params']
