@@ -11,7 +11,6 @@ from src.models.state_encoder import StateEncoder
 from src.models.predictors.reward_predictor import RewardPredictor, RewardPredictorLoss
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
-import subprocess
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -280,13 +279,10 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     #print(f"Validation R² calculation: {r2_score:.4f}")
     # No uncertainty stats for simple MLP
     
-    # Create reward prediction plot
-    reward_plot = create_reward_prediction_plot(all_targets, all_predictions, "Validation: True vs Predicted Rewards")
-    
     # Also create and save a subset plot locally
     create_and_save_subset_plot(all_targets, all_predictions, subset_size=3000, filename="reward_prediction_subset.png")
     
-    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats, reward_plot
+    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats
 
 def train_reward_predictor():
     """
@@ -308,14 +304,9 @@ def train_reward_predictor():
         print("Continuing without wandb logging...")
         wandb_available = False
     
-    # Buffer setup with fast tensor mode
+    # Buffer setup
     buffer_path = config['buffer_path']
-    fast_buffer_path = buffer_path + '.fast.pt'
-    if not os.path.exists(fast_buffer_path):
-        print(f"Fast buffer {fast_buffer_path} not found. Preprocessing...")
-        subprocess.run(['python', 'scripts/preprocess_buffer.py', buffer_path, fast_buffer_path], check=True)
-    else:
-        print(f"Using fast buffer: {fast_buffer_path}")
+    print(f"Using buffer: {buffer_path}")
     
     # Model parameters
     encoder_type = config['encoder_type']
@@ -347,7 +338,7 @@ def train_reward_predictor():
 
     # Dataset setup
     dataset = ReplayBufferDataset(
-        buffer_path=fast_buffer_path,
+        buffer_path=buffer_path,
         num_color_selection_fns=num_color_selection_fns,
         num_selection_fns=num_selection_fns,
         num_transform_actions=num_transform_actions,
@@ -611,16 +602,13 @@ def train_reward_predictor():
         train_targets = torch.cat(train_targets, dim=0)
         train_r2 = calculate_r2_score(train_targets, train_predictions)
         
-        # Create training reward prediction plot
-        train_reward_plot = create_reward_prediction_plot(train_targets, train_predictions, f"Training Epoch {epoch+1}: True vs Predicted Rewards")
-        
         # Debug: Print some statistics
         #print(f"Training stats - Predictions: min={train_predictions.min():.4f}, max={train_predictions.max():.4f}, mean={train_predictions.mean():.4f}")
         #print(f"Training stats - Targets: min={train_targets.min():.4f}, max={train_targets.max():.4f}, mean={train_targets.mean():.4f}")
         #print(f"Training R² calculation: {train_r2:.4f}")
 
         # Evaluate on validation set
-        val_reward_mse, val_reward_mae, val_r2, val_uncertainty_stats, val_reward_plot = evaluate_reward_predictor(
+        val_reward_mse, val_reward_mae, val_r2, val_uncertainty_stats = evaluate_reward_predictor(
             reward_predictor, state_encoder, target_encoder, val_loader, device, reward_criterion
         )
 
@@ -649,14 +637,6 @@ def train_reward_predictor():
             
             #print(f"Logging to wandb: {log_dict}")
             wandb.log(log_dict)
-            
-            # Log the reward prediction plots
-            wandb.log({
-                "validation_reward_prediction_plot": wandb.Image(val_reward_plot),
-                "training_reward_prediction_plot": wandb.Image(train_reward_plot)
-            })
-            plt.close(val_reward_plot)  # Close the plots to free memory
-            plt.close(train_reward_plot)
 
             #print(f"Successfully logged metrics to wandb - Loss: {avg_loss:.4f}, R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
         else:
