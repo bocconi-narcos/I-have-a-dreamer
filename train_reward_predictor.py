@@ -585,7 +585,7 @@ def train_reward_predictor():
                     "batch_reward_mse": reward_mse.item(),
                     "batch_reward_mae": reward_mae.item(),
                     "batch_reward_r2": batch_r2,
-                    "batch_loss": loss.item(),
+                    # "batch_loss": loss.item(),
                     "learning_rate": optimizer.param_groups[0]['lr'],
                 }
                 wandb.log(batch_log_dict)
@@ -657,10 +657,10 @@ def train_reward_predictor():
                 'epoch': epoch + 1,
                 'best_val_loss': best_val_loss
             }, save_path)
-            print(f"✅ Epoch {epoch+1} - NEW BEST MODEL SAVED! (Val MSE: {val_reward_mse:.4f})")
+            print(f"Epoch {epoch+1} - New best model saved (Val MSE: {val_reward_mse:.4f})")
         else:
             epochs_no_improve += 1
-            print(f"❌ Epoch {epoch+1} - No improvement ({epochs_no_improve}/{patience} epochs without improvement)")
+            print(f"Epoch {epoch+1} - No improvement ({epochs_no_improve}/{patience} epochs without improvement)")
 
         # Update learning rate scheduler (once per epoch)
         scheduler.step()
