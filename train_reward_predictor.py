@@ -296,6 +296,8 @@ def train_reward_predictor():
     Train the simple MLP reward predictor.
     Takes three encoded states and predicts a scalar reward.
     """
+    
+
     config = load_config()
     
     # Initialize wandb
@@ -462,7 +464,6 @@ def train_reward_predictor():
         reward_predictor.train()
         total_reward_mse = 0
         total_reward_mae = 0
-        total_reward_r2 = 0
         total_samples = 0
         
         # Simple loss tracking
@@ -561,7 +562,6 @@ def train_reward_predictor():
                 )
             
             optimizer.step()
-            scheduler.step()
             global_step += 1
 
             # EMA update for target encoder
@@ -573,13 +573,12 @@ def train_reward_predictor():
             train_predictions.append(pred_reward.squeeze(-1).detach())
             train_targets.append(reward)
 
-            # Calculate batch R²
+            # Calculate batch R² (for logging only, not for averaging)
             batch_r2 = calculate_r2_score(reward, pred_reward.squeeze(-1))
             
             # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
             total_reward_mae += reward_mae.item() * state.size(0)
-            total_reward_r2 += batch_r2 * state.size(0)
             total_samples += state.size(0)
             
             # Accumulate loss
@@ -603,7 +602,6 @@ def train_reward_predictor():
         # Compute average training metrics
         avg_reward_mse = total_reward_mse / total_samples
         avg_reward_mae = total_reward_mae / total_samples
-        avg_reward_r2 = total_reward_r2 / total_samples
         
         # Average loss
         avg_loss = total_loss / total_samples
@@ -628,7 +626,7 @@ def train_reward_predictor():
 
         # Print epoch results
         print(f"Epoch {epoch+1}/{num_epochs}")
-        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Loss: {avg_loss:.4f}")
+        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, R²: {train_r2:.4f}, Loss: {avg_loss:.4f}")
         print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}, R²: {val_r2:.4f}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
@@ -639,8 +637,7 @@ def train_reward_predictor():
                 "epoch": epoch + 1,
                 "train_reward_mse": avg_reward_mse,
                 "train_reward_mae": avg_reward_mae,
-                "train_reward_r2_avg_batch": avg_reward_r2,
-                "train_reward_r2_overall": train_r2,
+                "train_reward_r2": train_r2,
                 "train_loss": avg_loss,
                 "val_reward_mse": val_reward_mse,
                 "val_reward_mae": val_reward_mae,
@@ -661,9 +658,9 @@ def train_reward_predictor():
             plt.close(val_reward_plot)  # Close the plots to free memory
             plt.close(train_reward_plot)
             
-            print(f"Successfully logged metrics to wandb - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Successfully logged metrics to wandb - Loss: {avg_loss:.4f}, R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
         else:
-            print(f"Wandb not available - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Wandb not available - Loss: {avg_loss:.4f}, R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
         # Save best model
         if val_reward_mse < best_val_loss:
@@ -682,6 +679,9 @@ def train_reward_predictor():
         else:
             epochs_no_improve += 1
             print(f"No improvement for {epochs_no_improve} epoch(s)")
+        
+        # Update learning rate scheduler (once per epoch)
+        scheduler.step()
             
         if epochs_no_improve >= patience:
             print(f"Early stopping at epoch {epoch+1} due to no improvement in validation MSE for {patience} epochs.")
