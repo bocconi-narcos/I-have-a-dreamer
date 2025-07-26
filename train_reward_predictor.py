@@ -284,12 +284,12 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     # No uncertainty stats for simple MLP
     
     # Create reward prediction plot
-    reward_plot = create_reward_prediction_plot(all_targets, all_predictions, "Validation: True vs Predicted Rewards")
+    # reward_plot = create_reward_prediction_plot(all_targets, all_predictions, "Validation: True vs Predicted Rewards")
     
     # Also create and save a subset plot locally
-    create_and_save_subset_plot(all_targets, all_predictions, subset_size=3000, filename="reward_prediction_subset.png")
+    # create_and_save_subset_plot(all_targets, all_predictions, subset_size=3000, filename="reward_prediction_subset.png")
     
-    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats, reward_plot
+    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats, None
 
 def train_reward_predictor():
     """
@@ -585,9 +585,9 @@ def train_reward_predictor():
             # Accumulate loss
             total_loss += loss.item() * state.size(0)
 
-            # Log batch metrics every log_interval steps
-            if global_step % log_interval == 0 and wandb_available:
-                wandb.log({
+            # Log batch metrics every batch
+            if wandb_available:
+                batch_log_dict = {
                     "step": global_step,
                     "epoch": epoch + 1,
                     "batch": i + 1,  # Current batch number within epoch
@@ -596,8 +596,13 @@ def train_reward_predictor():
                     "batch_reward_r2": batch_r2,
                     "batch_loss": loss.item(),
                     "learning_rate": optimizer.param_groups[0]['lr'],
-                })
-                # Use tqdm.write to avoid interfering with the progress bar
+                }
+                wandb.log(batch_log_dict)
+                print(f"Logged batch metrics: batch_reward_r2={batch_r2:.4f}")
+            else:
+                print(f"Wandb not available for batch logging")
+                
+            # Use tqdm.write to avoid interfering with the progress bar
                 # tqdm.write(f"Batch {global_step} - MSE: {reward_mse.item():.4f}, MAE: {reward_mae.item():.4f}, R²: {batch_r2:.4f}, Loss: {loss.item():.4f}")
 
         # Compute average training metrics
@@ -614,7 +619,7 @@ def train_reward_predictor():
         train_r2 = calculate_r2_score(train_targets, train_predictions)
         
         # Create training reward prediction plot
-        train_reward_plot = create_reward_prediction_plot(train_targets, train_predictions, f"Training Epoch {epoch+1}: True vs Predicted Rewards")
+        # train_reward_plot = create_reward_prediction_plot(train_targets, train_predictions, f"Training Epoch {epoch+1}: True vs Predicted Rewards")
         
         # Debug: Print some statistics
         print(f"Training stats - Predictions: min={train_predictions.min():.4f}, max={train_predictions.max():.4f}, mean={train_predictions.mean():.4f}")
@@ -622,7 +627,7 @@ def train_reward_predictor():
         print(f"Training R² calculation: {train_r2:.4f}")
 
         # Evaluate on validation set
-        val_reward_mse, val_reward_mae, val_r2, val_uncertainty_stats, val_reward_plot = evaluate_reward_predictor(
+        val_reward_mse, val_reward_mae, val_r2, val_uncertainty_stats, _ = evaluate_reward_predictor(
             reward_predictor, state_encoder, target_encoder, val_loader, device, reward_criterion
         )
 
@@ -652,16 +657,17 @@ def train_reward_predictor():
             
             # print(f"Logging to wandb: {log_dict}")
             wandb.log(log_dict)
+            print(f"Logged validation metrics: val_reward_r2={val_r2:.4f}")
             
-            # Log the reward prediction plots
-            wandb.log({
-                "validation_reward_prediction_plot": wandb.Image(val_reward_plot),
-                "training_reward_prediction_plot": wandb.Image(train_reward_plot)
-            })
-            plt.close(val_reward_plot)  # Close the plots to free memory
-            plt.close(train_reward_plot)
+            # Log the reward prediction plots (commented out)
+            # wandb.log({
+            #     "validation_reward_prediction_plot": wandb.Image(val_reward_plot),
+            #     "training_reward_prediction_plot": wandb.Image(train_reward_plot)
+            # })
+            # plt.close(val_reward_plot)  # Close the plots to free memory
+            # plt.close(train_reward_plot)
             
-            print(f"Successfully logged metrics to wandb - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            # print(f"Successfully logged metrics to wandb - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
         else:
             print(f"Wandb not available - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
