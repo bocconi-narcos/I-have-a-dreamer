@@ -11,8 +11,7 @@ use_decoder_loss: true  # Use decoder losses instead of latent space losses
 encoder_type: "vit"   # Options: "mlp", "cnn", "vit"
 latent_dim: 128
 use_pretrained_encoder: false  # Set to true to load pretrained encoder from best_model_autoencoder.pth
-pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained autoencoder checkpointò§
-
+pretrained_encoder_path: ""  # Path to pretrained autoencoder checkpointò§
 
 
 freeze_pretrained_encoder: false  # Set to true to freeze pretrained encoder parameters

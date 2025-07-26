@@ -650,7 +650,7 @@ def train_reward_predictor():
             
             # No uncertainty stats for simple MLP
             
-            print(f"Logging to wandb: {log_dict}")
+            # print(f"Logging to wandb: {log_dict}")
             wandb.log(log_dict)
             
             # Log the reward prediction plots
