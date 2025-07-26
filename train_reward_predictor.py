@@ -461,9 +461,10 @@ def train_reward_predictor():
         train_predictions = []
         train_targets = []
         
-        print('len(train_dataset):', len(train_dataset))
-        print('batch_size:', batch_size)
-        print('len(train_loader):', len(train_loader))
+        # Debug info (commented out to keep progress bar clean)
+        # print('len(train_dataset):', len(train_dataset))
+        # print('batch_size:', batch_size)
+        # print('len(train_loader):', len(train_loader))
         for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
             # Current state
             state = batch['state'].to(device)
@@ -575,7 +576,7 @@ def train_reward_predictor():
             # Accumulate loss
             total_loss += loss.item() * state.size(0)
 
-            # Log batch metrics every batch
+            # Log batch metrics to wandb (silently, without printing)
             if wandb_available:
                 batch_log_dict = {
                     "step": global_step,
@@ -588,9 +589,6 @@ def train_reward_predictor():
                     "learning_rate": optimizer.param_groups[0]['lr'],
                 }
                 wandb.log(batch_log_dict)
-                print(f"Logged batch metrics: batch_reward_r2={batch_r2:.4f}")
-            else:
-                print(f"Wandb not available for batch logging")
                 
             # Use tqdm.write to avoid interfering with the progress bar
                 # tqdm.write(f"Batch {global_step} - MSE: {reward_mse.item():.4f}, MAE: {reward_mae.item():.4f}, R²: {batch_r2:.4f}, Loss: {loss.item():.4f}")
@@ -659,10 +657,10 @@ def train_reward_predictor():
                 'epoch': epoch + 1,
                 'best_val_loss': best_val_loss
             }, save_path)
-            #print(f"New best model saved to {save_path}")
+            print(f"✅ Epoch {epoch+1} - NEW BEST MODEL SAVED! (Val MSE: {val_reward_mse:.4f})")
         else:
             epochs_no_improve += 1
-            #print(f"No improvement for {epochs_no_improve} epoch(s)")
+            print(f"❌ Epoch {epoch+1} - No improvement ({epochs_no_improve}/{patience} epochs without improvement)")
 
         # Update learning rate scheduler (once per epoch)
         scheduler.step()
