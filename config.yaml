@@ -15,7 +15,7 @@ pretrained_encoder_path: "best_model_autoencoder.pth"  # Path to pretrained auto
 
 
 
-freeze_pretrained_encoder: true  # Set to true to freeze pretrained encoder parameters
+freeze_pretrained_encoder: false  # Set to true to freeze pretrained encoder parameters
 num_arc_colors: 12  # Number of colors in the arc (used for color prediction)
 
 encoder_params:
