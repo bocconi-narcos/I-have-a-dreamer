@@ -11,7 +11,6 @@ from src.models.state_encoder import StateEncoder
 from src.models.predictors.reward_predictor import RewardPredictor, RewardPredictorLoss
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
-import subprocess
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -165,9 +164,6 @@ def create_and_save_subset_plot(y_true, y_pred, subset_size=3000, filename="rewa
     
     # Save the plot
     plt.savefig(filename, dpi=300, bbox_inches='tight')
-    print(f"Plot saved as '{filename}'")
-    print(f"Showed {subset_size:,} random points out of {total_points:,} total points")
-    print(f"Subset R²: {r2_subset:.4f}, Full dataset R²: {r2_full:.4f}")
     
     plt.close()  # Close to free memory
     return fig
@@ -232,7 +228,7 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
                     most_common_color=most_present_color.to(device), 
                     least_common_color=least_present_color.to(device)
                 )
-                latent_tp1 = target_encoder(
+                latent_tp1 = state_encoder(
                     next_state.to(torch.long), 
                     shape_h=shape_h_next.to(device), 
                     shape_w=shape_w_next.to(device), 
@@ -240,7 +236,7 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
                     most_common_color=most_present_color_next.to(device), 
                     least_common_color=least_present_color_next.to(device)
                 )
-                latent_target = target_encoder(
+                latent_target = state_encoder(
                     target_state.to(torch.long), 
                     shape_h=shape_h_target.to(device), 
                     shape_w=shape_w_target.to(device), 
@@ -250,8 +246,8 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
                 )
             else:
                 latent_t = state_encoder(state.to(torch.long))
-                latent_tp1 = target_encoder(next_state.to(torch.long))
-                latent_target = target_encoder(target_state.to(torch.long))
+                latent_tp1 = state_encoder(next_state.to(torch.long))
+                latent_target = state_encoder(target_state.to(torch.long))
 
             # Predict reward with simple MLP model
             pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
@@ -278,24 +274,23 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     uncertainty_stats = {}
     
     # Debug: Print validation statistics
-    print(f"Validation stats - Predictions: min={all_predictions.min():.4f}, max={all_predictions.max():.4f}, mean={all_predictions.mean():.4f}")
-    print(f"Validation stats - Targets: min={all_targets.min():.4f}, max={all_targets.max():.4f}, mean={all_targets.mean():.4f}")
-    print(f"Validation R² calculation: {r2_score:.4f}")
+    #print(f"Validation stats - Predictions: min={all_predictions.min():.4f}, max={all_predictions.max():.4f}, mean={all_predictions.mean():.4f}")
+    #print(f"Validation stats - Targets: min={all_targets.min():.4f}, max={all_targets.max():.4f}, mean={all_targets.mean():.4f}")
+    #print(f"Validation R² calculation: {r2_score:.4f}")
     # No uncertainty stats for simple MLP
-    
-    # Create reward prediction plot
-    # reward_plot = create_reward_prediction_plot(all_targets, all_predictions, "Validation: True vs Predicted Rewards")
     
     # Also create and save a subset plot locally
     # create_and_save_subset_plot(all_targets, all_predictions, subset_size=3000, filename="reward_prediction_subset.png")
     
-    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats, None
+    return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats
 
 def train_reward_predictor():
     """
     Train the simple MLP reward predictor.
     Takes three encoded states and predicts a scalar reward.
     """
+    
+
     config = load_config()
     
     # Initialize wandb
@@ -309,14 +304,9 @@ def train_reward_predictor():
         print("Continuing without wandb logging...")
         wandb_available = False
     
-    # Buffer setup with fast tensor mode
+    # Buffer setup
     buffer_path = config['buffer_path']
-    fast_buffer_path = buffer_path + '.fast.pt'
-    if not os.path.exists(fast_buffer_path):
-        print(f"Fast buffer {fast_buffer_path} not found. Preprocessing...")
-        subprocess.run(['python', 'scripts/preprocess_buffer.py', buffer_path, fast_buffer_path], check=True)
-    else:
-        print(f"Using fast buffer: {fast_buffer_path}")
+    print(f"Using buffer: {buffer_path}")
     
     # Model parameters
     encoder_type = config['encoder_type']
@@ -348,7 +338,7 @@ def train_reward_predictor():
 
     # Dataset setup
     dataset = ReplayBufferDataset(
-        buffer_path=fast_buffer_path,
+        buffer_path=buffer_path,
         num_color_selection_fns=num_color_selection_fns,
         num_selection_fns=num_selection_fns,
         num_transform_actions=num_transform_actions,
@@ -462,7 +452,6 @@ def train_reward_predictor():
         reward_predictor.train()
         total_reward_mse = 0
         total_reward_mae = 0
-        total_reward_r2 = 0
         total_samples = 0
         
         # Simple loss tracking
@@ -472,6 +461,9 @@ def train_reward_predictor():
         train_predictions = []
         train_targets = []
         
+        print('len(train_dataset):', len(train_dataset))
+        print('batch_size:', batch_size)
+        print('len(train_loader):', len(train_loader))
         for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
             # Current state
             state = batch['state'].to(device)
@@ -516,7 +508,7 @@ def train_reward_predictor():
                     most_common_color=most_present_color.to(device), 
                     least_common_color=least_present_color.to(device)
                 )
-                latent_tp1 = target_encoder(
+                latent_tp1 = state_encoder(
                     next_state.to(torch.long), 
                     shape_h=shape_h_next.to(device), 
                     shape_w=shape_w_next.to(device), 
@@ -524,7 +516,7 @@ def train_reward_predictor():
                     most_common_color=most_present_color_next.to(device), 
                     least_common_color=least_present_color_next.to(device)
                 )
-                latent_target = target_encoder(
+                latent_target = state_encoder(
                     target_state.to(torch.long), 
                     shape_h=shape_h_target.to(device), 
                     shape_w=shape_w_target.to(device), 
@@ -534,8 +526,8 @@ def train_reward_predictor():
                 )
             else:
                 latent_t = state_encoder(state.to(torch.long))
-                latent_tp1 = target_encoder(next_state.to(torch.long))
-                latent_target = target_encoder(target_state.to(torch.long))
+                latent_tp1 = state_encoder(next_state.to(torch.long))
+                latent_target = state_encoder(target_state.to(torch.long))
 
             # Predict reward with simple MLP model
             pred_reward = reward_predictor(latent_t, latent_tp1, latent_target)
@@ -561,7 +553,6 @@ def train_reward_predictor():
                 )
             
             optimizer.step()
-            scheduler.step()
             global_step += 1
 
             # EMA update for target encoder
@@ -573,13 +564,12 @@ def train_reward_predictor():
             train_predictions.append(pred_reward.squeeze(-1).detach())
             train_targets.append(reward)
 
-            # Calculate batch R²
+            # Calculate batch R² (for logging only, not for averaging)
             batch_r2 = calculate_r2_score(reward, pred_reward.squeeze(-1))
             
             # Accumulate metrics
             total_reward_mse += reward_mse.item() * state.size(0)
             total_reward_mae += reward_mae.item() * state.size(0)
-            total_reward_r2 += batch_r2 * state.size(0)
             total_samples += state.size(0)
             
             # Accumulate loss
@@ -608,7 +598,6 @@ def train_reward_predictor():
         # Compute average training metrics
         avg_reward_mse = total_reward_mse / total_samples
         avg_reward_mae = total_reward_mae / total_samples
-        avg_reward_r2 = total_reward_r2 / total_samples
         
         # Average loss
         avg_loss = total_loss / total_samples
@@ -618,22 +607,19 @@ def train_reward_predictor():
         train_targets = torch.cat(train_targets, dim=0)
         train_r2 = calculate_r2_score(train_targets, train_predictions)
         
-        # Create training reward prediction plot
-        # train_reward_plot = create_reward_prediction_plot(train_targets, train_predictions, f"Training Epoch {epoch+1}: True vs Predicted Rewards")
-        
         # Debug: Print some statistics
-        print(f"Training stats - Predictions: min={train_predictions.min():.4f}, max={train_predictions.max():.4f}, mean={train_predictions.mean():.4f}")
-        print(f"Training stats - Targets: min={train_targets.min():.4f}, max={train_targets.max():.4f}, mean={train_targets.mean():.4f}")
-        print(f"Training R² calculation: {train_r2:.4f}")
+        #print(f"Training stats - Predictions: min={train_predictions.min():.4f}, max={train_predictions.max():.4f}, mean={train_predictions.mean():.4f}")
+        #print(f"Training stats - Targets: min={train_targets.min():.4f}, max={train_targets.max():.4f}, mean={train_targets.mean():.4f}")
+        #print(f"Training R² calculation: {train_r2:.4f}")
 
         # Evaluate on validation set
-        val_reward_mse, val_reward_mae, val_r2, val_uncertainty_stats, _ = evaluate_reward_predictor(
+        val_reward_mse, val_reward_mae, val_r2, val_uncertainty_stats = evaluate_reward_predictor(
             reward_predictor, state_encoder, target_encoder, val_loader, device, reward_criterion
         )
 
         # Print epoch results
         print(f"Epoch {epoch+1}/{num_epochs}")
-        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Loss: {avg_loss:.4f}")
+        print(f"  Train - MSE: {avg_reward_mse:.4f}, MAE: {avg_reward_mae:.4f}, R²: {train_r2:.4f}, Loss: {avg_loss:.4f}")
         print(f"  Val   - MSE: {val_reward_mse:.4f}, MAE: {val_reward_mae:.4f}, R²: {val_r2:.4f}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}")
 
@@ -644,8 +630,7 @@ def train_reward_predictor():
                 "epoch": epoch + 1,
                 "train_reward_mse": avg_reward_mse,
                 "train_reward_mae": avg_reward_mae,
-                "train_reward_r2_avg_batch": avg_reward_r2,
-                "train_reward_r2_overall": train_r2,
+                "train_reward_r2": train_r2,
                 "train_loss": avg_loss,
                 "val_reward_mse": val_reward_mse,
                 "val_reward_mae": val_reward_mae,
@@ -655,21 +640,11 @@ def train_reward_predictor():
             
             # No uncertainty stats for simple MLP
             
-            # print(f"Logging to wandb: {log_dict}")
+            #print(f"Logging to wandb: {log_dict}")
             wandb.log(log_dict)
             print(f"Logged validation metrics: val_reward_r2={val_r2:.4f}")
-            
-            # Log the reward prediction plots (commented out)
-            # wandb.log({
-            #     "validation_reward_prediction_plot": wandb.Image(val_reward_plot),
-            #     "training_reward_prediction_plot": wandb.Image(train_reward_plot)
-            # })
-            # plt.close(val_reward_plot)  # Close the plots to free memory
-            # plt.close(train_reward_plot)
-            
-            # print(f"Successfully logged metrics to wandb - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
         else:
-            print(f"Wandb not available - Loss: {avg_loss:.4f}, Avg Batch R²: {avg_reward_r2:.4f}, Overall R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Wandb not available - Loss: {avg_loss:.4f}, R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
         # Save best model
         if val_reward_mse < best_val_loss:
@@ -684,10 +659,13 @@ def train_reward_predictor():
                 'epoch': epoch + 1,
                 'best_val_loss': best_val_loss
             }, save_path)
-            print(f"New best model saved to {save_path}")
+            #print(f"New best model saved to {save_path}")
         else:
             epochs_no_improve += 1
-            print(f"No improvement for {epochs_no_improve} epoch(s)")
+            #print(f"No improvement for {epochs_no_improve} epoch(s)")
+
+        # Update learning rate scheduler (once per epoch)
+        scheduler.step()
             
         if epochs_no_improve >= patience:
             print(f"Early stopping at epoch {epoch+1} due to no improvement in validation MSE for {patience} epochs.")
