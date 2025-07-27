@@ -879,7 +879,8 @@ def train_next_state_predictor():
         print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Train Reward Loss: {avg_reward_loss:.4f} | Train Total Loss: {avg_total_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Reward Loss: {val_reward_loss:.4f} | Val Color Acc: {val_color_acc:.4f} | Val Total Loss: {val_total_loss:.4f}")
         # --- WANDB LOGGING FOR EPOCH ---
         # Log to Wandb with explicit step - use max(0, r2) for better plotting
-        val_reward_r2_plot = max(0, val_reward_r2)  # Use max(0, r2) so negative values become 0
+        val_reward_r2_plot = val_reward_r2 #IF WISH TO PLOT ANY VALUE, USE THIS
+        # val_reward_r2_plot = max(0, val_reward_r2)  # IF WISH TO PLOT ONLY POSITIVE VALUES, USE THIS
         log_dict = {
             "epoch": epoch + 1,
             "train_color_loss": avg_color_loss,
