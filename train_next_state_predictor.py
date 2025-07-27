@@ -39,6 +39,44 @@ def load_config(config_path="config.yaml"):
     
     return config
 
+# --- R² calculation function ---
+def calculate_r2_score(y_true, y_pred):
+    """
+    Calculate R-squared (R²) score.
+    
+    Args:
+        y_true: Ground truth values
+        y_pred: Predicted values
+        
+    Returns:
+        R² score (float)
+    """
+    # Calculate mean of true values
+    y_mean = torch.mean(y_true)
+    
+    # Calculate total sum of squares (TSS)
+    tss = torch.sum((y_true - y_mean) ** 2)
+    
+    # Calculate residual sum of squares (RSS)
+    rss = torch.sum((y_true - y_pred) ** 2)
+    
+    # Handle edge cases
+    if tss == 0:
+        # If TSS is 0, all true values are the same
+        if rss == 0:
+            return 1.0  # Perfect prediction
+        else:
+            return 0.0  # No predictive power
+    
+    # Calculate R²
+    r2 = 1 - (rss / tss)
+    
+    # Handle numerical issues
+    if torch.isnan(r2) or torch.isinf(r2):
+        return 0.0
+    
+    return r2.item()
+
 # --- One-hot encoding utility ---
 def one_hot(indices, num_classes):
     return torch.nn.functional.one_hot(indices, num_classes=num_classes).float()
@@ -73,7 +111,7 @@ def autoencoder_loss(decoder_output, original_grid, shape_h, shape_w, most_commo
 def evaluate_all_modules(color_predictor, selection_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder, 
                         colour_selection_embedder, selection_embedder, dataloader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
                         use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion,
-                        state_decoder=None, mask_decoder=None, use_ground_truth=False, use_decoder_loss=False, num_arc_colors=None):
+                        state_decoder=None, mask_decoder=None, use_ground_truth=False, use_decoder_loss_selection=False, use_decoder_loss_next_state=False, num_arc_colors=None):
     color_predictor.eval()
     selection_predictor.eval()
     next_state_predictor.eval()
@@ -90,6 +128,16 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
     color_class_total = None
     # For next state predictor metrics
     total_next_state_cosine = 0
+    
+    # For R² calculation - collect all predictions and targets
+    all_color_predictions = []
+    all_color_targets = []
+    all_selection_predictions = []
+    all_selection_targets = []
+    all_next_state_predictions = []
+    all_next_state_targets = []
+    all_reward_predictions = []
+    all_reward_targets = []
     with torch.no_grad():
         for batch in dataloader:
             state = batch['state'].to(device)
@@ -151,7 +199,7 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_input)
             
             # Decoder switch: use decoder loss vs latent space loss
-            if use_decoder_loss and mask_decoder is not None:
+            if use_decoder_loss_selection and mask_decoder is not None:
                 # Decode predicted mask and compute loss against ground truth mask
                 pred_mask_logits = mask_decoder(pred_latent_mask)
                 # Compute cross-entropy loss on the decoded mask
@@ -182,7 +230,7 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             pred_next_latent = next_state_predictor(latent, action_transform_onehot, mask_input)
             
             # Decoder switch: use decoder loss vs latent space loss
-            if use_decoder_loss and state_decoder is not None:
+            if use_decoder_loss_next_state and state_decoder is not None:
                 # Decode predicted next state and compute loss against ground truth next state
                 pred_next_state_logits = state_decoder(pred_next_latent)
                 # Compute autoencoder-style loss
@@ -208,6 +256,14 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             cosine_sim = (pred_next_latent_norm * latent_next_norm).sum(dim=-1).mean().item()
             total_next_state_cosine += cosine_sim * state.size(0)
 
+            # Collect predictions and targets for R² calculation
+            all_color_predictions.append(color_logits.softmax(dim=1))
+            all_color_targets.append(target_colour)
+            all_selection_predictions.append(pred_latent_mask)
+            all_selection_targets.append(target_latent_mask)
+            all_next_state_predictions.append(pred_next_latent)
+            all_next_state_targets.append(latent_next)
+
             total_color_loss += color_loss.item() * state.size(0)
             total_selection_loss += selection_loss.item() * state.size(0)
             total_next_state_loss += next_state_loss.item() * state.size(0)
@@ -228,7 +284,35 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
     else:
         color_class_acc = None
     avg_next_state_cosine = total_next_state_cosine / total
-    return avg_color_loss, avg_selection_loss, avg_next_state_loss, color_accuracy, color_class_acc, avg_next_state_cosine
+    
+    # Calculate R² scores
+    if all_color_predictions and all_color_targets:
+        all_color_preds = torch.cat(all_color_predictions, dim=0)
+        all_color_targs = torch.cat(all_color_targets, dim=0)
+        # For color prediction, we need to convert to regression-like format
+        # Use the predicted probability of the correct class as the "prediction"
+        color_r2 = calculate_r2_score(all_color_targs.float(), all_color_preds.max(dim=1)[0])
+    else:
+        color_r2 = 0.0
+    
+    if all_next_state_predictions and all_next_state_targets:
+        all_next_state_preds = torch.cat(all_next_state_predictions, dim=0)
+        all_next_state_targs = torch.cat(all_next_state_targets, dim=0)
+        # For next state, calculate R² on the flattened latent representations
+        next_state_r2 = calculate_r2_score(all_next_state_targs.flatten(), all_next_state_preds.flatten())
+    else:
+        next_state_r2 = 0.0
+    
+    # Calculate selection R²
+    if all_selection_predictions and all_selection_targets:
+        all_selection_preds = torch.cat(all_selection_predictions, dim=0)
+        all_selection_targs = torch.cat(all_selection_targets, dim=0)
+        # For selection, calculate R² on the flattened latent representations
+        selection_r2 = calculate_r2_score(all_selection_targs.flatten(), all_selection_preds.flatten())
+    else:
+        selection_r2 = 0.0
+    
+    return avg_color_loss, avg_selection_loss, avg_next_state_loss, color_accuracy, color_class_acc, avg_next_state_cosine, color_r2, next_state_r2, selection_r2
 
 # --- Main Training Loop ---
 def train_next_state_predictor():
@@ -426,42 +510,49 @@ def train_next_state_predictor():
     # Reward Predictor initialization
     reward_predictor = RewardPredictor(
         latent_dim=latent_dim,
-        hidden_dim=config['reward_predictor'].get('hidden_dim', 128),
-        transformer_depth=config['reward_predictor'].get('transformer_depth', 2),
-        transformer_heads=config['reward_predictor'].get('transformer_heads', 2),
-        transformer_dim_head=config['reward_predictor'].get('transformer_dim_head', 64),
-        transformer_mlp_dim=config['reward_predictor'].get('transformer_mlp_dim', 128),
-        dropout=config['reward_predictor'].get('transformer_dropout', 0.1),
-        proj_dim=config['reward_predictor'].get('proj_dim', None)
+        hidden_dim=config['reward_predictor'].get('hidden_dim', 256),
+        num_layers=config['reward_predictor'].get('num_layers', 3),
+        dropout=config['reward_predictor'].get('dropout', 0.1)
     ).to(device)
     print(f"[RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
 
     # Load ground truth and decoder switches
     use_ground_truth = config.get('use_ground_truth', False)
     use_decoder_loss = config.get('use_decoder_loss', False)
+    
+    # Override configuration as requested:
+    # - use_ground_truth=False for all predictors (color, selection, next_state, reward)
+    # - use_decoder_loss=True only for selection predictor (mask predictor)
+    use_ground_truth = False  # Force False for all predictors
+    use_decoder_loss_selection = True   # Force True for selection predictor only
+    use_decoder_loss_next_state = False # Force False for next state predictor
+    
     print(f"Training configuration:")
-    print(f"  - Use ground truth inputs: {use_ground_truth}")
-    print(f"  - Use decoder losses: {use_decoder_loss}")
+    print(f"  - Use ground truth inputs: {use_ground_truth} (forced False for all predictors)")
+    print(f"  - Use decoder losses for selection: {use_decoder_loss_selection} (forced True)")
+    print(f"  - Use decoder losses for next state: {use_decoder_loss_next_state} (forced False)")
 
     # Initialize decoders if using decoder losses
     state_decoder = None
     mask_decoder = None
-    if use_decoder_loss:
-        # State decoder for next state prediction
-        state_decoder = StateDecoder(
-            image_size=image_size,
-            latent_dim=latent_dim,
-            decoder_params=config.get('decoder_params', {})
-        ).to(device)
-        print(f"[StateDecoder] Number of parameters: {sum(p.numel() for p in state_decoder.parameters())}")
+    if use_decoder_loss_selection or use_decoder_loss_next_state:
+        if use_decoder_loss_selection:
+            # Mask decoder for selection mask prediction
+            mask_decoder = MaskDecoder(
+                image_size=image_size,
+                latent_dim=latent_mask_dim,
+                decoder_params=config.get('mask_decoder_params', {})
+            ).to(device)
+            print(f"[MaskDecoder] Number of parameters: {sum(p.numel() for p in mask_decoder.parameters())}")
         
-        # Mask decoder for selection mask prediction
-        mask_decoder = MaskDecoder(
-            image_size=image_size,
-            latent_dim=latent_mask_dim,
-            decoder_params=config.get('mask_decoder_params', {})
-        ).to(device)
-        print(f"[MaskDecoder] Number of parameters: {sum(p.numel() for p in mask_decoder.parameters())}")
+        if use_decoder_loss_next_state:
+            # State decoder for next state prediction
+            state_decoder = StateDecoder(
+                image_size=image_size,
+                latent_dim=latent_dim,
+                decoder_params=config.get('decoder_params', {})
+            ).to(device)
+            print(f"[StateDecoder] Number of parameters: {sum(p.numel() for p in state_decoder.parameters())}")
 
     # Loss functions
     color_criterion = nn.CrossEntropyLoss()
@@ -482,8 +573,10 @@ def train_next_state_predictor():
             list(colour_selection_embedder.parameters()) +
             list(selection_embedder.parameters())
         )
-        if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
-            optimizer_params += list(state_decoder.parameters()) + list(mask_decoder.parameters())
+        if use_decoder_loss_selection and mask_decoder is not None:
+            optimizer_params += list(mask_decoder.parameters())
+        if use_decoder_loss_next_state and state_decoder is not None:
+            optimizer_params += list(state_decoder.parameters())
         optimizer = optim.AdamW(optimizer_params, lr=learning_rate)
     else:
         optimizer_params = (
@@ -496,8 +589,10 @@ def train_next_state_predictor():
             list(colour_selection_embedder.parameters()) +
             list(selection_embedder.parameters())
         )
-        if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
-            optimizer_params += list(state_decoder.parameters()) + list(mask_decoder.parameters())
+        if use_decoder_loss_selection and mask_decoder is not None:
+            optimizer_params += list(mask_decoder.parameters())
+        if use_decoder_loss_next_state and state_decoder is not None:
+            optimizer_params += list(state_decoder.parameters())
         optimizer = optim.AdamW(optimizer_params, lr=learning_rate)
 
     best_val_loss = float('inf')
@@ -516,11 +611,10 @@ def train_next_state_predictor():
         selection_mask_predictor.train()
         next_state_predictor.train()
         reward_predictor.train()
-        if use_decoder_loss:
-            if state_decoder is not None:
-                state_decoder.train()
-            if mask_decoder is not None:
-                mask_decoder.train()
+        if use_decoder_loss_selection and mask_decoder is not None:
+            mask_decoder.train()
+        if use_decoder_loss_next_state and state_decoder is not None:
+            state_decoder.train()
         total_color_loss = 0
         total_selection_loss = 0
         total_next_state_loss = 0
@@ -597,7 +691,7 @@ def train_next_state_predictor():
             pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_input)
             
             # Decoder switch: use decoder loss vs latent space loss
-            if use_decoder_loss and mask_decoder is not None:
+            if use_decoder_loss_selection and mask_decoder is not None:
                 # Decode predicted mask and compute loss against ground truth mask
                 pred_mask_logits = mask_decoder(pred_latent_mask)
                 # Compute cross-entropy loss on the decoded mask
@@ -628,7 +722,7 @@ def train_next_state_predictor():
             pred_next_latent = next_state_predictor(latent, action_transform_onehot, mask_input)
             
             # Decoder switch: use decoder loss vs latent space loss
-            if use_decoder_loss and state_decoder is not None:
+            if use_decoder_loss_next_state and state_decoder is not None:
                 # Decode predicted next state and compute loss against ground truth next state
                 pred_next_state_logits = state_decoder(pred_next_latent)
                 # Compute autoencoder-style loss
@@ -677,8 +771,10 @@ def train_next_state_predictor():
                 list(selection_embedder.parameters()) +
                 list(reward_predictor.parameters())
             )
-            if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
-                grad_params += list(state_decoder.parameters()) + list(mask_decoder.parameters())
+            if use_decoder_loss_selection and mask_decoder is not None:
+                grad_params += list(mask_decoder.parameters())
+            if use_decoder_loss_next_state and state_decoder is not None:
+                grad_params += list(state_decoder.parameters())
             torch.nn.utils.clip_grad_norm_(grad_params, max_norm=1.0)
             optimizer.step()
             global_step += 1
@@ -710,23 +806,29 @@ def train_next_state_predictor():
         avg_reward_loss = total_reward_loss / num_train_samples
         avg_total_loss = avg_color_loss + avg_selection_loss + avg_next_state_loss + avg_reward_loss
 
-        val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine = evaluate_all_modules(
+        val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine, val_color_r2, val_next_state_r2, val_selection_r2 = evaluate_all_modules(
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
             colour_selection_embedder, selection_embedder, val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
             use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion,
-            state_decoder, mask_decoder, use_ground_truth, use_decoder_loss, num_arc_colors
+            state_decoder, mask_decoder, use_ground_truth, use_decoder_loss_selection, use_decoder_loss_next_state, num_arc_colors
         )
 
-        # --- Compute validation reward loss --- # TO REVIEW IS THIS CORRECT
+        # --- Compute validation reward loss and R² ---
         reward_predictor.eval()
         total_val_reward_loss = 0
         total_val_samples = 0
+        all_reward_predictions = []
+        all_reward_targets = []
         with torch.no_grad():
             for batch in val_loader:
                 state = batch['state'].to(device)
                 next_state = batch['next_state'].to(device)
                 target_state = batch['target_state'].to(device)
                 reward = batch['reward'].to(device)
+                action_colour = batch['action_colour'].to(device)
+                action_selection = batch['action_selection'].to(device)
+                action_transform = batch['action_transform'].to(device)
+                selection_mask = batch['selection_mask'].to(device)
                 shape_h = batch.get('shape_h', None)
                 shape_w = batch.get('shape_w', None)
                 num_colors_grid = batch.get('num_colors_grid', None)
@@ -736,6 +838,7 @@ def train_next_state_predictor():
                 if state.dim() == 3:
                     state = state.unsqueeze(1)
                     next_state = next_state.unsqueeze(1)
+                    selection_mask = selection_mask.unsqueeze(1)
 
                 # Encode state and next_state
                 if shape_h is not None:
@@ -747,11 +850,43 @@ def train_next_state_predictor():
                     latent_next = target_encoder(next_state.to(torch.long))
                     latent_target = target_encoder(target_state.to(torch.long))
 
-                pred_reward = reward_predictor(latent, latent_next, latent_target)
+                # Get action embeddings for prediction
+                action_colour_onehot = one_hot(action_colour, num_color_selection_fns)
+                action_selection_onehot = one_hot(action_selection, num_selection_fns)
+                action_transform_onehot = one_hot(action_transform, num_transform_actions)
+
+                # Predict color
+                action_color_embedding = colour_selection_embedder(action_colour_onehot)
+                color_logits = color_predictor(latent, action_color_embedding)
+
+                # Predict selection mask
+                action_selection_embedding = selection_embedder(action_selection_onehot)
+                color_input = color_logits.softmax(dim=1)  # Use predicted color
+                pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_input)
+
+                # Predict next state using predicted mask
+                mask_input = pred_latent_mask  # Use predicted mask
+                pred_next_latent = next_state_predictor(latent, action_transform_onehot, mask_input)
+
+                # Use predicted next state for reward prediction (consistent with training)
+                pred_reward = reward_predictor(latent, pred_next_latent, latent_target)
                 reward_loss = reward_criterion(pred_reward.squeeze(-1), reward.float())
                 total_val_reward_loss += reward_loss.item() * state.size(0)
                 total_val_samples += state.size(0)
+                
+                # Collect for R² calculation
+                all_reward_predictions.append(pred_reward.squeeze(-1))
+                all_reward_targets.append(reward.float())
+        
         val_reward_loss = total_val_reward_loss / total_val_samples if total_val_samples > 0 else 0.0
+        
+        # Calculate reward R²
+        if all_reward_predictions and all_reward_targets:
+            all_reward_preds = torch.cat(all_reward_predictions, dim=0)
+            all_reward_targs = torch.cat(all_reward_targets, dim=0)
+            val_reward_r2 = calculate_r2_score(all_reward_targs, all_reward_preds)
+        else:
+            val_reward_r2 = 0.0
 
         val_total_loss = val_color_loss + val_selection_loss + val_next_state_loss + val_reward_loss
         print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Train Reward Loss: {avg_reward_loss:.4f} | Train Total Loss: {avg_total_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Reward Loss: {val_reward_loss:.4f} | Val Color Acc: {val_color_acc:.4f} | Val Total Loss: {val_total_loss:.4f}")
@@ -770,6 +905,10 @@ def train_next_state_predictor():
             "val_reward_loss": val_reward_loss,
             "val_color_acc": val_color_acc,
             "val_next_state_cosine": val_next_state_cosine,
+            "val_color_r2": val_color_r2,
+            "val_selection_r2": val_selection_r2,
+            "val_next_state_r2": val_next_state_r2,
+            "val_reward_r2": val_reward_r2,
             "val_total_loss": val_total_loss
         })
 
@@ -792,10 +931,13 @@ def train_next_state_predictor():
                 'selection_embedder': selection_embedder.state_dict(),
                 'target_encoder': target_encoder.state_dict()
             }
-            if use_decoder_loss and state_decoder is not None and mask_decoder is not None:
+            if use_decoder_loss_selection and mask_decoder is not None:
                 save_dict.update({
-                    'state_decoder': state_decoder.state_dict(),
                     'mask_decoder': mask_decoder.state_dict()
+                })
+            if use_decoder_loss_next_state and state_decoder is not None:
+                save_dict.update({
+                    'state_decoder': state_decoder.state_dict()
                 })
             torch.save(save_dict, save_path)
             print(f"New best model saved to {save_path}")
