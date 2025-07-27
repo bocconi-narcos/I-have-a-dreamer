@@ -97,7 +97,7 @@ next_state:
 
 # Reward Predictor Module (SOTA Transformer-based)
 reward_predictor:
-  latent_dim: 128  # Dimension of latent vectors (z_t, z_{t+1}, z_target)
+  latent_dim: 256  # Dimension of latent vectors (z_t, z_{t+1}, z_target)
   hidden_dim: 256  # Hidden dimension for transformer (increased from 128)
   transformer_depth: 4  # Increased from 2
   transformer_heads: 8  # Increased from 2
