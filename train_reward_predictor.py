@@ -440,7 +440,6 @@ def train_reward_predictor():
     print(f"  - Simple MLP architecture")
     print(f"  - Gradient clipping: {gradient_clip_norm}")
     print(f"  - Early stopping patience: {patience}")
-    print(f"  - Cosine annealing scheduler")
     
     # Track global step for proper logging
     # Step = number of batch updates completed (increments every batch)
