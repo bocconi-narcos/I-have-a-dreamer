@@ -280,7 +280,8 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     # No uncertainty stats for simple MLP
     
     # Also create and save a subset plot locally
-    # create_and_save_subset_plot(all_targets, all_predictions, subset_size=3000, filename="reward_prediction_subset.png")
+    create_and_save_subset_plot(all_targets, all_predictions, subset_size=100, filename="reward_prediction_subset.png")
+    print(f"Saved reward prediction plot: reward_prediction_subset.png")
     
     return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats
 
