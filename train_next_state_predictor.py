@@ -60,6 +60,11 @@ def calculate_r2_score(y_true, y_pred):
     # Calculate residual sum of squares (RSS)
     rss = torch.sum((y_true - y_pred) ** 2)
     
+    # Debug prints
+    print(f"R² Debug - y_true mean: {y_mean.item():.4f}")
+    print(f"R² Debug - TSS: {tss.item():.4f}")
+    print(f"R² Debug - RSS: {rss.item():.4f}")
+    
     # Handle edge cases
     if tss == 0:
         # If TSS is 0, all true values are the same
@@ -73,8 +78,10 @@ def calculate_r2_score(y_true, y_pred):
     
     # Handle numerical issues
     if torch.isnan(r2) or torch.isinf(r2):
+        print(f"R² Debug - NaN or Inf detected: {r2}")
         return 0.0
     
+    print(f"R² Debug - Final R²: {r2.item():.4f}")
     return r2.item()
 
 # --- One-hot encoding utility ---
@@ -127,17 +134,10 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
     color_class_correct = None
     color_class_total = None
     # For next state predictor metrics
-    total_next_state_cosine = 0
+    # Note: Cosine similarity metrics removed
     
-    # For R² calculation - collect all predictions and targets
-    all_color_predictions = []
-    all_color_targets = []
-    all_selection_predictions = []
-    all_selection_targets = []
-    all_next_state_predictions = []
-    all_next_state_targets = []
-    all_reward_predictions = []
-    all_reward_targets = []
+    # Note: R² calculation removed for color, selection, and next state predictors
+    # Only reward predictor uses R² as it's the only true regression task
     with torch.no_grad():
         for batch in dataloader:
             state = batch['state'].to(device)
@@ -198,6 +198,9 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
             
             pred_latent_mask = selection_predictor(latent, action_selection_embedding, color_input)
             
+            # Always encode target latent mask for R² calculation
+            target_latent_mask = mask_encoder(selection_mask.to(torch.long))
+            
             # Decoder switch: use decoder loss vs latent space loss
             if use_decoder_loss_selection and mask_decoder is not None:
                 # Decode predicted mask and compute loss against ground truth mask
@@ -212,7 +215,6 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
                 selection_loss = mask_loss
             else:
                 # Use latent space loss (original behavior)
-                target_latent_mask = mask_encoder(selection_mask.to(torch.long))
                 if use_vicreg_selection:
                     selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
                 else:
@@ -250,19 +252,9 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
                 else:
                     next_state_loss = next_state_criterion(pred_next_latent, latent_next)
 
-            # Cosine similarity for next state prediction
-            pred_next_latent_norm = F.normalize(pred_next_latent, p=2, dim=-1)
-            latent_next_norm = F.normalize(latent_next, p=2, dim=-1)
-            cosine_sim = (pred_next_latent_norm * latent_next_norm).sum(dim=-1).mean().item()
-            total_next_state_cosine += cosine_sim * state.size(0)
+            # Note: Cosine similarity calculation removed
 
-            # Collect predictions and targets for R² calculation
-            all_color_predictions.append(color_logits.softmax(dim=1))
-            all_color_targets.append(target_colour)
-            all_selection_predictions.append(pred_latent_mask)
-            all_selection_targets.append(target_latent_mask)
-            all_next_state_predictions.append(pred_next_latent)
-            all_next_state_targets.append(latent_next)
+            # Note: R² calculation removed for color, selection, and next state predictors
 
             total_color_loss += color_loss.item() * state.size(0)
             total_selection_loss += selection_loss.item() * state.size(0)
@@ -283,36 +275,12 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
         color_class_acc = (color_class_correct / (color_class_total + 1e-8)).tolist()
     else:
         color_class_acc = None
-    avg_next_state_cosine = total_next_state_cosine / total
+    # Note: Cosine similarity average removed
     
-    # Calculate R² scores
-    if all_color_predictions and all_color_targets:
-        all_color_preds = torch.cat(all_color_predictions, dim=0)
-        all_color_targs = torch.cat(all_color_targets, dim=0)
-        # For color prediction, we need to convert to regression-like format
-        # Use the predicted probability of the correct class as the "prediction"
-        color_r2 = calculate_r2_score(all_color_targs.float(), all_color_preds.max(dim=1)[0])
-    else:
-        color_r2 = 0.0
+    # Note: R² metrics removed for color, selection, and next state predictors
+    # Only reward predictor uses R² as it's the only true regression task
     
-    if all_next_state_predictions and all_next_state_targets:
-        all_next_state_preds = torch.cat(all_next_state_predictions, dim=0)
-        all_next_state_targs = torch.cat(all_next_state_targets, dim=0)
-        # For next state, calculate R² on the flattened latent representations
-        next_state_r2 = calculate_r2_score(all_next_state_targs.flatten(), all_next_state_preds.flatten())
-    else:
-        next_state_r2 = 0.0
-    
-    # Calculate selection R²
-    if all_selection_predictions and all_selection_targets:
-        all_selection_preds = torch.cat(all_selection_predictions, dim=0)
-        all_selection_targs = torch.cat(all_selection_targets, dim=0)
-        # For selection, calculate R² on the flattened latent representations
-        selection_r2 = calculate_r2_score(all_selection_targs.flatten(), all_selection_preds.flatten())
-    else:
-        selection_r2 = 0.0
-    
-    return avg_color_loss, avg_selection_loss, avg_next_state_loss, color_accuracy, color_class_acc, avg_next_state_cosine, color_r2, next_state_r2, selection_r2
+    return avg_color_loss, avg_selection_loss, avg_next_state_loss, color_accuracy, color_class_acc
 
 # --- Main Training Loop ---
 def train_next_state_predictor():
@@ -603,6 +571,7 @@ def train_next_state_predictor():
     
     # Track global step for proper logging
     global_step = 0
+    epoch_counter = 0  # Simple epoch counter for debugging
     
     for epoch in range(num_epochs):
         state_encoder.train()
@@ -690,6 +659,14 @@ def train_next_state_predictor():
             
             pred_latent_mask = selection_mask_predictor(latent, action_selection_embedding, color_input)
             
+            # Always encode target latent mask for R² calculation
+            target_latent_mask = mask_encoder(selection_mask.to(torch.long))
+            
+            # Debug: Check if decoders are being used
+            if global_step % 1000 == 0:  # Print every 1000 steps to avoid spam
+                print(f"🔍 Training Debug: use_decoder_loss_selection={use_decoder_loss_selection}, mask_decoder exists={mask_decoder is not None}")
+                print(f"🔍 Training Debug: use_decoder_loss_next_state={use_decoder_loss_next_state}, state_decoder exists={state_decoder is not None}")
+            
             # Decoder switch: use decoder loss vs latent space loss
             if use_decoder_loss_selection and mask_decoder is not None:
                 # Decode predicted mask and compute loss against ground truth mask
@@ -704,7 +681,6 @@ def train_next_state_predictor():
                 selection_loss = mask_loss
             else:
                 # Use latent space loss (original behavior)
-                target_latent_mask = mask_encoder(selection_mask.to(torch.long))
                 if use_vicreg_selection:
                     selection_loss, _, _, _ = vicreg_loss_fn_selection(pred_latent_mask, target_latent_mask)
                 else:
@@ -806,7 +782,7 @@ def train_next_state_predictor():
         avg_reward_loss = total_reward_loss / num_train_samples
         avg_total_loss = avg_color_loss + avg_selection_loss + avg_next_state_loss + avg_reward_loss
 
-        val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc, val_next_state_cosine, val_color_r2, val_next_state_r2, val_selection_r2 = evaluate_all_modules(
+        val_color_loss, val_selection_loss, val_next_state_loss, val_color_acc, val_color_class_acc = evaluate_all_modules(
             color_predictor, selection_mask_predictor, next_state_predictor, state_encoder, target_encoder, mask_encoder,
             colour_selection_embedder, selection_embedder, val_loader, device, color_criterion, num_color_selection_fns, num_selection_fns, num_transform_actions,
             use_vicreg_selection, vicreg_loss_fn_selection, selection_criterion, use_vicreg_next_state, vicreg_loss_fn_next_state, next_state_criterion,
@@ -881,18 +857,30 @@ def train_next_state_predictor():
         val_reward_loss = total_val_reward_loss / total_val_samples if total_val_samples > 0 else 0.0
         
         # Calculate reward R²
+        print(f"Debug: all_reward_predictions length: {len(all_reward_predictions)}")
+        print(f"Debug: all_reward_targets length: {len(all_reward_targets)}")
         if all_reward_predictions and all_reward_targets:
             all_reward_preds = torch.cat(all_reward_predictions, dim=0)
             all_reward_targs = torch.cat(all_reward_targets, dim=0)
+            print(f"Debug: all_reward_preds shape: {all_reward_preds.shape}")
+            print(f"Debug: all_reward_targs shape: {all_reward_targs.shape}")
+            print(f"Debug: all_reward_preds range: [{all_reward_preds.min().item():.4f}, {all_reward_preds.max().item():.4f}]")
+            print(f"Debug: all_reward_targs range: [{all_reward_targs.min().item():.4f}, {all_reward_targs.max().item():.4f}]")
             val_reward_r2 = calculate_r2_score(all_reward_targs, all_reward_preds)
+            # Ensure it's a Python float for Wandb
+            val_reward_r2 = float(val_reward_r2)
+            print(f"Reward R² calculation: {len(all_reward_predictions)} batches, {all_reward_preds.shape[0]} total predictions")
+            print(f"Reward R² value: {val_reward_r2:.4f} (type: {type(val_reward_r2)})")
         else:
             val_reward_r2 = 0.0
+            print("Warning: No reward predictions/targets collected for R² calculation")
 
         val_total_loss = val_color_loss + val_selection_loss + val_next_state_loss + val_reward_loss
         print(f"Epoch {epoch+1}/{num_epochs} - Train Color Loss: {avg_color_loss:.4f} | Train Selection Loss: {avg_selection_loss:.4f} | Train Next State Loss: {avg_next_state_loss:.4f} | Train Reward Loss: {avg_reward_loss:.4f} | Train Total Loss: {avg_total_loss:.4f} | Val Color Loss: {val_color_loss:.4f} | Val Selection Loss: {val_selection_loss:.4f} | Val Next State Loss: {val_next_state_loss:.4f} | Val Reward Loss: {val_reward_loss:.4f} | Val Color Acc: {val_color_acc:.4f} | Val Total Loss: {val_total_loss:.4f}")
         # --- WANDB LOGGING FOR EPOCH ---
-        wandb.log({  # type: ignore
-            "step": global_step,
+        # Log to Wandb with explicit step - use max(0, r2) for better plotting
+        val_reward_r2_plot = max(0, val_reward_r2)  # Use max(0, r2) so negative values become 0
+        log_dict = {
             "epoch": epoch + 1,
             "train_color_loss": avg_color_loss,
             "train_selection_loss": avg_selection_loss,
@@ -904,18 +892,19 @@ def train_next_state_predictor():
             "val_next_state_loss": val_next_state_loss,
             "val_reward_loss": val_reward_loss,
             "val_color_acc": val_color_acc,
-            "val_next_state_cosine": val_next_state_cosine,
-            "val_color_r2": val_color_r2,
-            "val_selection_r2": val_selection_r2,
-            "val_next_state_r2": val_next_state_r2,
-            "val_reward_r2": val_reward_r2,
+            "val_reward_r2": val_reward_r2_plot,  # Use max(0, r2) for plotting
             "val_total_loss": val_total_loss
-        })
+        }
+        wandb.log(log_dict, step=global_step)  # type: ignore
+        print(f"Logged to Wandb: val_reward_r2 = {val_reward_r2_plot:.4f} (original: {val_reward_r2:.4f}) at step {global_step}")
+        print(f"Log dict keys: {list(log_dict.keys())}")
+        print(f"Log dict values: {[(k, v) for k, v in log_dict.items() if 'reward' in k.lower()]}")
+        epoch_counter += 1
 
         # Log per-class accuracies separately
-        if val_color_class_acc is not None:
-            for i, acc in enumerate(val_color_class_acc):
-                wandb.log({f"val_color_class_{i}_acc": acc, "step": global_step})  # type: ignore
+        # if val_color_class_acc is not None:
+        #     for i, acc in enumerate(val_color_class_acc):
+        #         wandb.log({f"val_color_class_{i}_acc": acc, "step": global_step})  # type: ignore
 
         if val_total_loss < best_val_loss:
             best_val_loss = val_total_loss
@@ -935,10 +924,16 @@ def train_next_state_predictor():
                 save_dict.update({
                     'mask_decoder': mask_decoder.state_dict()
                 })
+                print(f"Mask decoder saved (use_decoder_loss_selection=True)")
+            else:
+                print(f"Mask decoder NOT saved (use_decoder_loss_selection={use_decoder_loss_selection}, mask_decoder exists={mask_decoder is not None})")
             if use_decoder_loss_next_state and state_decoder is not None:
                 save_dict.update({
                     'state_decoder': state_decoder.state_dict()
                 })
+                print(f"State decoder saved (use_decoder_loss_next_state=True)")
+            else:
+                print(f"State decoder not saved (use_decoder_loss_next_state={use_decoder_loss_next_state}, state_decoder exists={state_decoder is not None})")
             torch.save(save_dict, save_path)
             print(f"New best model saved to {save_path}")
         else:
