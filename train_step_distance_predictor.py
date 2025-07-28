@@ -163,6 +163,83 @@ class StepDistanceDataset(ReplayBufferDataset):
         
         return sample
 
+class StepDistanceMLP(nn.Module):
+    """
+    Simple MLP that predicts step distance from encoded state and encoded target.
+    """
+    
+    def __init__(self, latent_dim):
+        """
+        Initialize the simple StepDistanceMLP.
+        
+        Args:
+            latent_dim: Dimension of the encoded state/target representations
+        """
+        super(StepDistanceMLP, self).__init__()
+        
+        # Simple 2-layer MLP: input -> hidden -> output
+        input_dim = 2 * latent_dim  # concatenated state and target encodings
+        hidden_dim = 64
+        
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+    
+    def forward(self, state_encoding, target_encoding):
+        """
+        Forward pass to predict step distance.
+        
+        Args:
+            state_encoding: Encoded state representation [B, latent_dim]
+            target_encoding: Encoded target state representation [B, latent_dim]
+        
+        Returns:
+            predicted_distance: Predicted step distance [B, 1]
+        """
+        # Concatenate state and target encodings
+        combined = torch.cat([state_encoding, target_encoding], dim=-1)
+        
+        # Predict step distance
+        predicted_distance = self.mlp(combined)
+        
+        # Ensure non-negative output
+        predicted_distance = F.relu(predicted_distance)
+        
+        return predicted_distance
+
+def step_distance_mlp_loss(predicted_distance, actual_distance):
+    """
+    Compute loss for the step distance MLP.
+    
+    Args:
+        predicted_distance: Predicted step distance from MLP [B, 1]
+        actual_distance: Actual step distance from dataset [B]
+    
+    Returns:
+        loss: MAE loss between predicted and actual step distance
+        metrics: Dictionary with loss components for monitoring
+    """
+    
+    # Squeeze predicted_distance to match actual_distance shape
+    predicted_distance = predicted_distance.squeeze(-1)
+    
+    # MAE loss
+    loss = F.l1_loss(predicted_distance, actual_distance)
+    
+    # Additional metrics for monitoring
+    mse_loss = F.mse_loss(predicted_distance, actual_distance)
+    
+    r2_score = r2_score(predicted_distance, actual_distance)
+    
+    metrics = {
+        'mae_loss': loss.item(),
+        'mse_loss': mse_loss.item(),
+    }
+    
+    return loss, metrics
+
 def step_distance_loss(state_encoding, target_encoding, step_distance):
     """
     Compute step distance loss based on cosine similarity and expected similarity.
@@ -194,7 +271,8 @@ def step_distance_loss(state_encoding, target_encoding, step_distance):
     expected_sim = torch.exp(-step_distance)
     
     # MAE loss between actual and expected similarity
-    loss = F.l1_loss(cosine_sim, expected_sim)
+    loss = F.l1_loss(cosine_sim, expected_sim) #NOTE: use it if want to use MAE loss
+    # loss = F.huber_loss(cosine_sim, expected_sim) #NOTE: use it if want to use Huber loss
     
     metrics = {
         'cosine_similarity': cosine_sim.mean().item(),
@@ -361,7 +439,13 @@ def train_step_distance_predictor():
         if os.path.exists(pretrained_encoder_path):
             print(f"Loading pretrained encoder from {pretrained_encoder_path}")
             checkpoint = torch.load(pretrained_encoder_path, map_location=device)
-            state_encoder.load_state_dict(checkpoint['state_encoder'])
+            # Handle different checkpoint structures
+            if 'state_encoder' in checkpoint:
+                # Checkpoint has state_encoder wrapped in a dictionary
+                state_encoder.load_state_dict(checkpoint['state_encoder'])
+            else:
+                # Checkpoint contains the state dict directly
+                state_encoder.load_state_dict(checkpoint)
             print("Pretrained encoder loaded successfully!")
             if freeze_pretrained_encoder:
                 for param in state_encoder.parameters():
@@ -496,5 +580,243 @@ def train_step_distance_predictor():
     
     print("Training completed!")
 
+def train_step_distance_mlp():
+    """
+    Train the simple StepDistanceMLP to predict step distance.
+    """
+    config = load_config()
+    
+    # Initialize wandb
+    wandb_config = config.copy()
+    wandb_available = True
+    try:
+        wandb.init(project="step-distance-mlp", config=wandb_config, settings=wandb.Settings(init_timeout=180))
+        print("Wandb initialized successfully!")
+    except Exception as e:
+        print(f"Wandb initialization failed: {e}")
+        print("Continuing without wandb logging...")
+        wandb_available = False
+    
+    # Buffer setup
+    buffer_path = config['buffer_path']
+    print(f"Using buffer: {buffer_path}")
+    
+    # Model parameters
+    encoder_type = config['encoder_type']
+    latent_dim = config['latent_dim']
+    encoder_params = config['encoder_params']
+    
+    # Training parameters
+    batch_size = config['batch_size']
+    num_epochs = config['num_epochs']
+    learning_rate = config['learning_rate']
+    num_workers = config['num_workers']
+    log_interval = config['log_interval']
+    
+    # State shape
+    image_size = encoder_params.get('image_size', [10, 10])
+    input_channels = encoder_params.get('input_channels', 1)
+    if isinstance(image_size, int):
+        state_shape = (input_channels, image_size, image_size)
+    else:
+        state_shape = (input_channels, image_size[0], image_size[1])
+
+    # Dataset setup
+    dataset = StepDistanceDataset(
+        buffer_path=buffer_path,
+        num_color_selection_fns=config['action_embedders']['action_color_embedder']['num_actions'],
+        num_selection_fns=config['action_embedders']['action_selection_embedder']['num_actions'],
+        num_transform_actions=config['action_embedders']['action_transform_embedder']['num_actions'],
+        num_arc_colors=config['num_arc_colors'],
+        state_shape=state_shape,
+        mode='full'
+    )
+    
+    val_size = int(0.2 * len(dataset))
+    train_size = len(dataset) - val_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    # Device selection
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = torch.device('mps')
+        print('Using device: MPS (Apple Silicon GPU)')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+        print('Using device: CUDA')
+    else:
+        device = torch.device('cpu')
+        print('Using device: CPU')
+
+    # Create state encoder (frozen)
+    state_encoder = StateEncoder(
+        image_size=image_size,
+        input_channels=input_channels,
+        latent_dim=latent_dim,
+        encoder_params=encoder_params
+    ).to(device)
+    
+    # Load pretrained encoder
+    pretrained_encoder_path = config.get('pretrained_encoder_path', 'weights/best_model_state_encoder.pth')
+    if os.path.exists(pretrained_encoder_path):
+        print(f"Loading pretrained encoder from {pretrained_encoder_path}")
+        checkpoint = torch.load(pretrained_encoder_path, map_location=device)
+        # Handle different checkpoint structures
+        if 'state_encoder' in checkpoint:
+            # Checkpoint has state_encoder wrapped in a dictionary
+            state_encoder.load_state_dict(checkpoint['state_encoder'])
+        else:
+            # Checkpoint contains the state dict directly
+            state_encoder.load_state_dict(checkpoint)
+        print("Pretrained encoder loaded successfully!")
+        # Freeze encoder
+        for param in state_encoder.parameters():
+            param.requires_grad = False
+        print("Encoder parameters frozen.")
+    else:
+        print(f"Warning: Pretrained encoder path {pretrained_encoder_path} not found.")
+        return
+
+    # Create MLP
+    mlp = StepDistanceMLP(latent_dim=latent_dim).to(device)
+    print(f"Created MLP with {sum(p.numel() for p in mlp.parameters())} parameters")
+
+    # Optimizer (only for MLP)
+    optimizer = optim.AdamW(mlp.parameters(), lr=learning_rate, weight_decay=1e-4)
+
+    # Training loop
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    patience = config.get('early_stopping_patience', 10)
+    save_path = os.path.join('weights', 'best_model_step_distance_mlp.pth')
+    os.makedirs('weights', exist_ok=True)
+    
+    print(f"Starting MLP training with {len(train_dataset)} training samples and {len(val_dataset)} validation samples")
+    
+    for epoch in range(num_epochs):
+        mlp.train()
+        total_loss = 0
+        
+        for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", ncols=100)):
+            state = batch['state'].to(device)
+            target_state = batch['target_state'].to(device)
+            step_distance = batch['step_distance_to_target'].to(device)
+            
+            # Extract metadata
+            shape_h = batch['shape_h'].to(device)
+            shape_w = batch['shape_w'].to(device)
+            num_colors_grid = batch['num_colors_grid'].to(device)
+            most_present_color = batch['most_present_color'].to(device)
+            least_present_color = batch['least_present_color'].to(device)
+
+            # Encode states (frozen encoder)
+            with torch.no_grad():
+                state_encoding = state_encoder(
+                    state,
+                    shape_h=shape_h,
+                    shape_w=shape_w,
+                    num_unique_colors=num_colors_grid,
+                    most_common_color=most_present_color,
+                    least_common_color=least_present_color
+                )
+                
+                target_encoding = state_encoder(
+                    target_state,
+                    shape_h=shape_h,
+                    shape_w=shape_w,
+                    num_unique_colors=num_colors_grid,
+                    most_common_color=most_present_color,
+                    least_common_color=least_present_color
+                )
+
+            # Predict step distance
+            predicted_distance = mlp(state_encoding, target_encoding)
+            
+            # Compute loss
+            loss, metrics = step_distance_mlp_loss(predicted_distance, step_distance)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item() * state.size(0)
+
+        avg_loss = total_loss / len(train_dataset)
+        
+        # Validation
+        mlp.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                state = batch['state'].to(device)
+                target_state = batch['target_state'].to(device)
+                step_distance = batch['step_distance_to_target'].to(device)
+                
+                shape_h = batch['shape_h'].to(device)
+                shape_w = batch['shape_w'].to(device)
+                num_colors_grid = batch['num_colors_grid'].to(device)
+                most_present_color = batch['most_present_color'].to(device)
+                least_present_color = batch['least_present_color'].to(device)
+
+                state_encoding = state_encoder(
+                    state,
+                    shape_h=shape_h,
+                    shape_w=shape_w,
+                    num_unique_colors=num_colors_grid,
+                    most_common_color=most_present_color,
+                    least_common_color=least_present_color
+                )
+                
+                target_encoding = state_encoder(
+                    target_state,
+                    shape_h=shape_h,
+                    shape_w=shape_w,
+                    num_unique_colors=num_colors_grid,
+                    most_common_color=most_present_color,
+                    least_common_color=least_present_color
+                )
+
+                predicted_distance = mlp(state_encoding, target_encoding)
+                loss, metrics = step_distance_mlp_loss(predicted_distance, step_distance)
+                val_loss += loss.item() * state.size(0)
+        
+        val_loss = val_loss / len(val_dataset)
+        
+        print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_loss:.4f} | Val Loss: {val_loss:.4f}")
+        
+        # Log to wandb
+        if wandb_available:
+            wandb.log({
+                "epoch": epoch + 1,
+                "train_loss": avg_loss,
+                "val_loss": val_loss
+            })
+
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+            torch.save({
+                'mlp': mlp.state_dict(),
+                'config': config
+            }, save_path)
+            print(f"New best model saved to {save_path}")
+        else:
+            epochs_no_improve += 1
+            print(f"No improvement for {epochs_no_improve} epoch(s)")
+            
+        if epochs_no_improve >= patience:
+            print(f"Early stopping at epoch {epoch+1}")
+            break
+
+    if wandb_available:
+        wandb.finish()
+    
+    print("MLP training completed!")
+
 if __name__ == "__main__":
-    train_step_distance_predictor()
+    # Choose which training function to run
+    train_step_distance_predictor()  # Original cosine similarity approach
+    # train_step_distance_mlp()  # New MLP approach
