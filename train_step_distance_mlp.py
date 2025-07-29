@@ -280,7 +280,8 @@ def train_step_distance_mlp():
         # print("Starting validation...")
         state_encoder.eval()
         step_distance_mlp.eval()
-        val_loss = 0
+        val_loss_mse = 0
+        val_loss_mae = 0
         val_r2 = 0
         
         with torch.no_grad():
@@ -306,17 +307,20 @@ def train_step_distance_mlp():
                 predicted_distance = step_distance_mlp(state_encoding, target_encoding)
                 
                 # Calculate metrics
-                val_loss += F.mse_loss(predicted_distance.squeeze(-1), step_distance).item()
+                val_loss_mse += F.mse_loss(predicted_distance.squeeze(-1), step_distance).item()
+                val_loss_mae += F.l1_loss(predicted_distance.squeeze(-1), step_distance).item()
                 val_r2 += calculate_r2_score(step_distance, predicted_distance.squeeze(-1))
         
-        val_loss /= len(val_loader)
+        val_loss_mse /= len(val_loader)
+        val_loss_mae /= len(val_loader)
         val_r2 /= len(val_loader)
         
-        print(f"Validation - Loss: {val_loss:.4f}, R2: {val_r2:.4f}")
+        print(f"Validation - MSE Loss: {val_loss_mse:.4f}, MAE Loss: {val_loss_mae:.4f}, R2: {val_r2:.4f}")
         
         wandb.log({
             'epoch': epoch + 1,
-            'val_loss': val_loss,
+            'val_loss_mse': val_loss_mse,
+            'val_loss_mae': val_loss_mae,
             'val_r2': val_r2
         })
     
