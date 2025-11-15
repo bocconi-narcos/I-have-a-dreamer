@@ -250,3 +250,94 @@ class StateEncoder(nn.Module):
             return tokens[:, 0, :]
         else:
             raise ValueError(f"Unknown pooling method: {method}")
+
+
+class StateEncoderWrapper(nn.Module):
+    """
+    Backward-compatible wrapper for StateEncoder that returns a single pooled vector
+    instead of (tokens, causal_mask) tuple.
+    
+    This wrapper maintains backward compatibility with existing code that expects
+    StateEncoder to return (B, latent_dim) instead of (tokens, causal_mask).
+    
+    Usage:
+        # Old way (still works):
+        encoder = StateEncoderWrapper(StateEncoder(...))
+        latent = encoder(...)  # Returns (B, latent_dim)
+        
+        # New way (direct access):
+        encoder = StateEncoder(...)
+        tokens, causal_mask = encoder(...)  # Returns (B, seq_len, latent_dim), (B, seq_len, seq_len)
+    """
+    
+    def __init__(self, encoder: StateEncoder, pool_method: str = 'mean'):
+        """
+        Args:
+            encoder: StateEncoder instance to wrap
+            pool_method: 'mean' or 'first' - how to pool tokens into single vector
+        """
+        super().__init__()
+        # Register encoder as a submodule so PyTorch knows about it
+        self.add_module('encoder', encoder)
+        self.pool_method = pool_method
+        
+        # Forward all attributes to maintain compatibility
+        self.latent_dim = encoder.latent_dim
+        self.emb_dim = encoder.emb_dim
+        self.max_rows = encoder.max_rows
+        self.max_cols = encoder.max_cols
+    
+    def forward(self,
+                x: torch.LongTensor,
+                shape_h: torch.LongTensor = None,
+                shape_w: torch.LongTensor = None,
+                most_common_color: torch.LongTensor = None,
+                least_common_color: torch.LongTensor = None,
+                num_unique_colors: torch.LongTensor = None) -> torch.Tensor:
+        """
+        Forward pass that returns pooled latent vector for backward compatibility.
+        
+        Args:
+            Same as StateEncoder.forward()
+        Returns:
+            (B, latent_dim) pooled representation (backward compatible)
+        """
+        # Handle optional arguments for backward compatibility
+        if shape_h is None:
+            # If no shape arguments provided, create defaults
+            B = x.shape[0] if x.dim() >= 2 else 1
+            if x.dim() == 4 and x.shape[1] == 1:
+                H, W = x.shape[2], x.shape[3]
+            elif x.dim() == 3:
+                H, W = x.shape[1], x.shape[2]
+            else:
+                H, W = self.max_rows, self.max_cols
+            
+            shape_h = torch.full((B,), H, dtype=torch.long, device=x.device)
+            shape_w = torch.full((B,), W, dtype=torch.long, device=x.device)
+            most_common_color = torch.zeros(B, dtype=torch.long, device=x.device)
+            least_common_color = torch.zeros(B, dtype=torch.long, device=x.device)
+            num_unique_colors = torch.ones(B, dtype=torch.long, device=x.device)
+        
+        # Call wrapped encoder (access via _modules to avoid __getattr__ recursion)
+        encoder = self._modules['encoder']
+        tokens, causal_mask = encoder(
+            x, shape_h, shape_w, most_common_color, least_common_color, num_unique_colors
+        )
+        
+        # Pool tokens to single vector
+        return encoder.pool_tokens(tokens, causal_mask, method=self.pool_method)
+    
+    def __getattr__(self, name):
+        """Forward attribute access to wrapped encoder"""
+        # Avoid recursion by checking if encoder exists first
+        if name == 'encoder':
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        try:
+            return super().__getattribute__(name)
+        except AttributeError:
+            # Access encoder via _modules to avoid recursion
+            encoder = self._modules.get('encoder')
+            if encoder is not None:
+                return getattr(encoder, name)
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
