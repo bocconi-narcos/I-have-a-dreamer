@@ -14,7 +14,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from models.state_encoder import StateEncoder
+from models.state_encoder import StateEncoder, StateEncoderWrapper
 
 
 class TestStateEncoderBasic:
@@ -371,6 +371,89 @@ class TestBackwardCompatibility:
         
         with pytest.raises(ValueError, match="Unknown pooling method"):
             encoder.pool_tokens(tokens, causal_mask, method='invalid')
+
+
+class TestWrapper:
+    """Tests for StateEncoderWrapper backward compatibility"""
+    
+    @pytest.fixture
+    def encoder(self):
+        encoder_params = {
+            "depth": 2,
+            "heads": 4,
+            "mlp_dim": 128,
+            "transformer_dim": 64,
+            "dropout": 0.1,
+            "emb_dropout": 0.1,
+            "colors_vocab_size": 12
+        }
+        base_encoder = StateEncoder(
+            image_size=(5, 5),
+            input_channels=1,
+            latent_dim=128,
+            encoder_params=encoder_params
+        )
+        return StateEncoderWrapper(base_encoder, pool_method='mean')
+    
+    def test_wrapper_returns_single_tensor(self, encoder):
+        """Test that wrapper returns single tensor (B, latent_dim) for backward compatibility"""
+        B, H, W = 2, 5, 5
+        x = torch.randint(0, 11, (B, H, W))
+        shape_h = torch.tensor([3, 4])
+        shape_w = torch.tensor([3, 4])
+        
+        result = encoder(
+            x,
+            shape_h,
+            shape_w,
+            torch.tensor([1, 2]),
+            torch.tensor([0, 1]),
+            torch.tensor([5, 6])
+        )
+        
+        assert isinstance(result, torch.Tensor), "Wrapper should return single tensor"
+        assert result.shape == (B, 128), f"Expected ({B}, 128), got {result.shape}"
+        assert result.dim() == 2, "Should return 2D tensor (B, latent_dim)"
+    
+    def test_wrapper_attribute_access(self, encoder):
+        """Test that wrapper forwards attribute access to wrapped encoder"""
+        assert encoder.latent_dim == 128
+        assert encoder.max_rows == 5
+        assert encoder.max_cols == 5
+    
+    def test_wrapper_different_pool_methods(self):
+        """Test wrapper with different pooling methods"""
+        encoder_params = {
+            "depth": 2,
+            "heads": 4,
+            "mlp_dim": 128,
+            "transformer_dim": 64,
+            "dropout": 0.1,
+            "emb_dropout": 0.1,
+            "colors_vocab_size": 12
+        }
+        base_encoder = StateEncoder(
+            image_size=(5, 5),
+            input_channels=1,
+            latent_dim=128,
+            encoder_params=encoder_params
+        )
+        
+        wrapped_mean = StateEncoderWrapper(base_encoder, pool_method='mean')
+        wrapped_first = StateEncoderWrapper(base_encoder, pool_method='first')
+        
+        B, H, W = 2, 5, 5
+        x = torch.randint(0, 11, (B, H, W))
+        shape_h = torch.tensor([3, 4])
+        shape_w = torch.tensor([3, 4])
+        
+        result_mean = wrapped_mean(x, shape_h, shape_w, torch.tensor([1, 2]), torch.tensor([0, 1]), torch.tensor([5, 6]))
+        result_first = wrapped_first(x, shape_h, shape_w, torch.tensor([1, 2]), torch.tensor([0, 1]), torch.tensor([5, 6]))
+        
+        assert result_mean.shape == (B, 128)
+        assert result_first.shape == (B, 128)
+        # Results should be different (mean vs first token)
+        assert not torch.allclose(result_mean, result_first), "Mean and first pooling should give different results"
 
 
 class TestIntegration:
