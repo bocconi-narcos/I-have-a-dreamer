@@ -69,8 +69,10 @@ class StateEncoder(nn.Module):
 
         # positional embeddings
         if self.scaled_pos:
-            self.pos_row_embed = nn.Parameter(torch.randn(self.emb_dim))
-            self.pos_col_embed = nn.Parameter(torch.randn(self.emb_dim))
+            # Scaled positional embeddings: learnable vectors that are multiplied by position indices
+            # Initialize with small values for stability
+            self.pos_row_embed = nn.Parameter(torch.randn(self.emb_dim) * 0.02)
+            self.pos_col_embed = nn.Parameter(torch.randn(self.emb_dim) * 0.02)
         else:
             self.pos_row_embed = nn.Embedding(self.max_rows, self.emb_dim)
             self.pos_col_embed = nn.Embedding(self.max_cols, self.emb_dim)
@@ -144,11 +146,15 @@ class StateEncoder(nn.Module):
 
         # 2) positional embeddings
         if self.scaled_pos:
-            rows = torch.arange(1, H+1, device=x.device).unsqueeze(1)  # (H,1)
-            cols = torch.arange(1, W+1, device=x.device).unsqueeze(1)  # (W,1)
+            # Scaled positional embeddings: multiply position indices by learnable vectors
+            # Use 0-based indexing for consistency with non-scaled mode and PyTorch conventions
+            # Convert to float for proper broadcasting with learnable parameters
+            rows = torch.arange(H, device=x.device, dtype=x_emb.dtype).unsqueeze(1)  # (H,1)
+            cols = torch.arange(W, device=x.device, dtype=x_emb.dtype).unsqueeze(1)  # (W,1)
             pos_row = rows * self.pos_row_embed                       # (H,emb_dim)
             pos_col = cols * self.pos_col_embed                       # (W,emb_dim)
         else:
+            # Learned positional embeddings: lookup embeddings for each position
             pos_row = self.pos_row_embed(torch.arange(H, device=x.device))
             pos_col = self.pos_col_embed(torch.arange(W, device=x.device))
         pos = pos_row[:, None, :] + pos_col[None, :, :]               # (H, W, emb_dim)
