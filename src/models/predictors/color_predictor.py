@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Tuple
+from typing import Tuple, Optional
 from src.models.base.transformer_blocks import PreNorm, FeedForward, Attention, Transformer
 
 class ColorPredictor(nn.Module):
@@ -117,6 +117,218 @@ class TransformerColorPredictor(nn.Module):
         
         # Step 5: Pass through MLP head to predict color class logits
         color_logits = self.mlp_head(flattened_output)  # (batch_size, num_colors)
+        
+        return color_logits
+
+
+class PreNormCrossAttentionBlock(nn.Module):
+    """
+    Pre-norm cross-attention block for color prediction.
+    
+    Uses action embedding as query and state tokens as key/value.
+    Implements pre-norm architecture for stability.
+    """
+    def __init__(self, latent_dim: int, heads: int = 8, mlp_dim: int = 256, dropout: float = 0.1):
+        super().__init__()
+        self.norm_query = nn.LayerNorm(latent_dim)
+        self.norm_kv = nn.LayerNorm(latent_dim)
+        
+        # Cross-attention: action (query) attends to state tokens (key/value)
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=latent_dim,
+            num_heads=heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.dropout1 = nn.Dropout(dropout)
+        
+        # Feed-forward network
+        self.norm2 = nn.LayerNorm(latent_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(latent_dim, mlp_dim * 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(mlp_dim * 2, latent_dim),
+            nn.Dropout(dropout)
+        )
+    
+    def forward(
+        self,
+        query: torch.Tensor,  # (B, 1, latent_dim) - action embedding
+        key_value: torch.Tensor,  # (B, num_token, latent_dim) - state tokens
+        key_padding_mask: Optional[torch.Tensor] = None  # (B, num_token) - True = mask out
+    ) -> torch.Tensor:
+        """
+        Forward pass through cross-attention block.
+        
+        Args:
+            query: Action embedding as query (B, 1, latent_dim)
+            key_value: State tokens as key/value (B, num_token, latent_dim)
+            key_padding_mask: Padding mask for state tokens (B, num_token), True = mask out
+        
+        Returns:
+            Updated query after cross-attention (B, 1, latent_dim)
+        """
+        # Pre-norm cross-attention
+        query_norm = self.norm_query(query)
+        kv_norm = self.norm_kv(key_value)
+        
+        attn_out, _ = self.cross_attn(
+            query_norm, kv_norm, kv_norm,
+            key_padding_mask=key_padding_mask
+        )
+        query = query + self.dropout1(attn_out)
+        
+        # Pre-norm feed-forward
+        query_norm = self.norm2(query)
+        mlp_out = self.mlp(query_norm)
+        query = query + mlp_out
+        
+        return query
+
+
+class CrossAttentionColorPredictor(nn.Module):
+    """
+    Cross-attention based color predictor.
+    
+    Uses cross-attention layers where action embedding (query) attends to state tokens (key/value).
+    Implements pre-norm architecture for stability and uses causal mask to avoid attention on padding tokens.
+    
+    Args:
+        latent_dim: Dimension of latent embeddings (must match state token dimensions)
+        num_colors: Number of color classes to predict
+        action_embedding_dim: Dimension of action embedding (will be projected to latent_dim if different)
+        num_layers: Number of cross-attention layers (default: 2)
+        heads: Number of attention heads (default: 8)
+        mlp_dim: Hidden dimension of MLP blocks (default: 256)
+        dropout: Dropout rate (default: 0.1)
+        mlp_hidden_dim: Hidden dimension for final MLP head (default: 128)
+    """
+    def __init__(
+        self,
+        latent_dim: int,
+        num_colors: int = 11,
+        action_embedding_dim: Optional[int] = None,
+        num_layers: int = 2,
+        heads: int = 8,
+        mlp_dim: int = 256,
+        dropout: float = 0.1,
+        mlp_hidden_dim: int = 128
+    ):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.num_colors = num_colors
+        self.num_layers = num_layers
+        
+        # Project action embedding to latent_dim if dimensions don't match
+        if action_embedding_dim is not None and action_embedding_dim != latent_dim:
+            self.action_projection = nn.Linear(action_embedding_dim, latent_dim)
+        else:
+            self.action_projection = None
+        
+        # Stack of cross-attention blocks
+        self.layers = nn.ModuleList([
+            PreNormCrossAttentionBlock(
+                latent_dim=latent_dim,
+                heads=heads,
+                mlp_dim=mlp_dim,
+                dropout=dropout
+            )
+            for _ in range(num_layers)
+        ])
+        
+        # Final prediction head
+        self.prediction_head = nn.Sequential(
+            nn.LayerNorm(latent_dim),
+            nn.Linear(latent_dim, mlp_hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(mlp_hidden_dim, num_colors)
+        )
+        
+        # Print model statistics
+        num_params = sum(p.numel() for p in self.parameters())
+        print(f"[CrossAttentionColorPredictor] Number of parameters: {num_params}")
+        print(f"[CrossAttentionColorPredictor] Latent dim: {latent_dim}, Colors: {num_colors}")
+        print(f"[CrossAttentionColorPredictor] Layers: {num_layers}, Heads: {heads}, MLP dim: {mlp_dim}")
+    
+    def _convert_causal_mask_to_padding_mask(
+        self,
+        causal_mask: torch.Tensor,
+        num_tokens: int
+    ) -> torch.Tensor:
+        """
+        Convert causal mask to padding mask for MultiheadAttention.
+        
+        A token is considered padding if it's completely masked (all positions are True).
+        This means the token cannot attend to anything, so it's effectively padding.
+        
+        Args:
+            causal_mask: Causal mask (B, num_tokens, num_tokens) or (B, num_tokens)
+            num_tokens: Number of tokens in sequence
+        
+        Returns:
+            padding_mask: (B, num_tokens) where True = mask out (padding token)
+        """
+        if causal_mask is None:
+            return None
+        
+        if causal_mask.dim() == 2:
+            # Already 1D mask: (B, num_tokens)
+            # If True, token is masked (padding)
+            return causal_mask
+        elif causal_mask.dim() == 3:
+            # 2D mask: (B, num_tokens, num_tokens)
+            # A token is padding if it cannot attend to anything (all True in its row)
+            # Check if all positions are masked for each token
+            padding_mask = causal_mask.all(dim=-1)  # (B, num_tokens)
+            return padding_mask
+        else:
+            raise ValueError(f"Unexpected causal_mask dimension: {causal_mask.dim()}")
+    
+    def forward(
+        self,
+        action_embedding: torch.Tensor,  # (B, action_embedding_dim) or (B, latent_dim)
+        state_tokens: torch.Tensor,  # (B, num_token, latent_dim)
+        causal_mask: Optional[torch.Tensor] = None  # (B, num_token, num_token) or (B, num_token)
+    ) -> torch.Tensor:
+        """
+        Forward pass through cross-attention color predictor.
+        
+        Args:
+            action_embedding: Action embedding (B, action_embedding_dim) or (B, latent_dim)
+            state_tokens: State tokens from encoder (B, num_token, latent_dim)
+            causal_mask: Causal mask indicating valid tokens (B, num_token, num_token) or (B, num_token)
+                        If None, all tokens are considered valid
+        
+        Returns:
+            color_logits: Color class logits (B, num_colors)
+        """
+        B = action_embedding.shape[0]
+        
+        # Project action embedding to latent_dim if necessary
+        if self.action_projection is not None:
+            action_embedding = self.action_projection(action_embedding)  # (B, latent_dim)
+        
+        # Expand action to sequence format: (B, latent_dim) -> (B, 1, latent_dim)
+        query = action_embedding.unsqueeze(1)  # (B, 1, latent_dim)
+        
+        # Convert causal mask to padding mask for MultiheadAttention
+        # padding_mask[i] = True means token i is padding and should be masked out
+        padding_mask = self._convert_causal_mask_to_padding_mask(
+            causal_mask, state_tokens.shape[1]
+        )
+        
+        # Apply cross-attention layers
+        # Each layer: action (query) attends to state tokens (key/value)
+        for layer in self.layers:
+            query = layer(query, state_tokens, key_padding_mask=padding_mask)
+        
+        # Extract action representation: (B, 1, latent_dim) -> (B, latent_dim)
+        action_repr = query.squeeze(1)  # (B, latent_dim)
+        
+        # Final prediction head
+        color_logits = self.prediction_head(action_repr)  # (B, num_colors)
         
         return color_logits
 
