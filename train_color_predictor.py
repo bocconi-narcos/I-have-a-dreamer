@@ -182,11 +182,15 @@ def train_color_predictor():
         ).to(device)
 
     # Use new CrossAttentionColorPredictor with token-based inputs
+    # num_layers is highly customizable - adjust based on your needs:
+    # - num_layers=1: Faster, less abstraction
+    # - num_layers=2: Balanced (default)
+    # - num_layers=4+: Deeper abstraction, more parameters
     color_predictor = CrossAttentionColorPredictor(
         latent_dim=latent_dim,
         num_colors=num_arc_colors,
         action_embedding_dim=action_embedding_dim,  # Will be projected to latent_dim
-        num_layers=2,  # Customizable
+        num_layers=2,  # HIGHLY CUSTOMIZABLE: Number of cross-attention layers
         heads=8,
         mlp_dim=256,
         dropout=0.1,
