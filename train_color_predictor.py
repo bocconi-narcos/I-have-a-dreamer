@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split
 import yaml
 import pickle
 from src.models.state_encoder import StateEncoder
-from src.models.predictors.color_predictor import ColorPredictor, TransformerColorPredictor
+from src.models.predictors.color_predictor import ColorPredictor, TransformerColorPredictor, CrossAttentionColorPredictor
 from src.data import ReplayBufferDataset
 from torch.utils.data import Dataset
 from src.models.action_embed import ActionEmbedder
@@ -46,7 +46,8 @@ def evaluate(model, encoder, action_embedder, dataloader, device, criterion, num
             most_present_color              = batch['most_present_color'].to(device)
             least_present_color             = batch['least_present_color'].to(device)
             
-            latent                          = encoder(
+            # Get state tokens and causal mask from encoder
+            state_tokens, causal_mask = encoder(
                 state,
                 shape_w=shape_w,
                 shape_h=shape_h,
@@ -56,7 +57,15 @@ def evaluate(model, encoder, action_embedder, dataloader, device, criterion, num
             )
             action_colour_onehot            = one_hot(action_colour, num_color_selection_fns)
             action_embedding                = action_embedder(action_colour_onehot)
-            logits                          = model(latent, action_embedding)
+            # Use new cross-attention predictor with tokens and mask
+            if isinstance(model, CrossAttentionColorPredictor):
+                logits = model(action_embedding, state_tokens, causal_mask)
+            else:
+                # Backward compatibility: use pooled latent for old predictor
+                from src.models.state_encoder import StateEncoderWrapper
+                # Pool tokens to single vector (mean pooling)
+                latent = state_tokens.mean(dim=1)  # (B, latent_dim)
+                logits = model(latent, action_embedding)
             loss                            = criterion(logits, target_colour)
             total_loss                     += loss.item() * state.size(0)
             preds                           = torch.argmax(logits, dim=1)
@@ -172,14 +181,21 @@ def train_color_predictor():
         dropout_p=0.1
         ).to(device)
 
-    color_predictor                         = ColorPredictor(
-        latent_dim,
-        num_colors=num_arc_colors, 
-        hidden_dim=color_predictor_hidden_dim, 
-        action_embedding_dim=action_embedding_dim
-        ).to(device)
+    # Use new CrossAttentionColorPredictor with token-based inputs
+    color_predictor = CrossAttentionColorPredictor(
+        latent_dim=latent_dim,
+        num_colors=num_arc_colors,
+        action_embedding_dim=action_embedding_dim,  # Will be projected to latent_dim
+        num_layers=2,  # Customizable
+        heads=8,
+        mlp_dim=256,
+        dropout=0.1,
+        mlp_hidden_dim=color_predictor_hidden_dim
+    ).to(device)
     
-    #color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
+    # Old predictors (kept for backward compatibility):
+    # color_predictor = ColorPredictor(latent_dim, num_colors=num_arc_colors, hidden_dim=color_predictor_hidden_dim, action_embedding_dim=action_embedding_dim).to(device)
+    # color_predictor = TransformerColorPredictor(latent_dim, action_embedding_dim=action_embedding_dim, num_colors=11, transformer_depth=2, transformer_heads=4, transformer_dim_head=32, transformer_mlp_dim=512, transformer_dropout=0.3, mlp_hidden_dim=256).to(device)
 
     criterion                               = nn.CrossEntropyLoss()
     
@@ -245,21 +261,27 @@ def train_color_predictor():
             if state.dim() == 3:
                 # (B, H, W) -> (B, 1, H, W) for single channel
                 state = state
-            latent = state_encoder(
+            # Get state tokens and causal mask from encoder
+            state_tokens, causal_mask = state_encoder(
                 state,
                 shape_w=shape_w,
                 shape_h=shape_h,
                 num_unique_colors=num_colors_grid,
                 most_common_color=most_present_color,
                 least_common_color=least_present_color
-            )  # (B, latent_dim)
+            )  # state_tokens: (B, num_token, latent_dim), causal_mask: (B, num_token, num_token)
 
             # Color selection one-hot
             action_colour_onehot            = one_hot(action_colour, num_color_selection_fns)  # (B, num_color_selection_fns)
-            action_embedding                = action_embedder(action_colour_onehot)  # (B, 12)
+            action_embedding                = action_embedder(action_colour_onehot)  # (B, action_embedding_dim)
 
-            # Concatenate and predict
-            logits                          = color_predictor(latent, action_embedding)  # (B, num_arc_colors)
+            # Use cross-attention predictor with tokens and mask
+            if isinstance(color_predictor, CrossAttentionColorPredictor):
+                logits = color_predictor(action_embedding, state_tokens, causal_mask)  # (B, num_arc_colors)
+            else:
+                # Backward compatibility: use pooled latent for old predictor
+                latent = state_tokens.mean(dim=1)  # (B, latent_dim)
+                logits = color_predictor(latent, action_embedding)  # (B, num_arc_colors)
             
             loss                            = criterion(logits, target_colour)
             optimizer.zero_grad()
