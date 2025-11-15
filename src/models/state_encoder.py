@@ -54,6 +54,7 @@ class StateEncoder(nn.Module):
         self.scaled_pos = params.get("scaled_position_embeddings", False)
         self.vocab_size = params.get("colors_vocab_size", 11)
         self.padding_value = -1
+        self.latent_dim = latent_dim  # Store for access
 
         # determine max rows/cols
         if isinstance(image_size, int):
@@ -83,8 +84,7 @@ class StateEncoder(nn.Module):
         self.least_common_embed = nn.Embedding(self.vocab_size, self.emb_dim)
         self.unique_count_embed = nn.Embedding(self.vocab_size + 1, self.emb_dim)
 
-        # CLS token
-        self.cls_token = nn.Parameter(torch.randn(1, 1, self.emb_dim))
+        # Note: CLS token removed - we output all tokens instead
 
         # dropout on embeddings
         self.emb_drop = nn.Dropout(self.emb_dropout)
@@ -100,11 +100,11 @@ class StateEncoder(nn.Module):
             for _ in range(self.depth)
         ])
 
-        # final projection
+        # final projection for all tokens
         self.to_latent = nn.Linear(self.emb_dim, latent_dim) \
             if self.emb_dim != latent_dim else nn.Identity()
         
-        # final normalization for CLS token
+        # final normalization for all tokens
         self.final_norm = nn.LayerNorm(self.emb_dim)
         
         # print model statistics
@@ -117,7 +117,7 @@ class StateEncoder(nn.Module):
                 shape_w: torch.LongTensor,
                 most_common_color: torch.LongTensor,
                 least_common_color: torch.LongTensor,
-                num_unique_colors: torch.LongTensor) -> torch.Tensor:
+                num_unique_colors: torch.LongTensor) -> tuple:
         """
         Args:
             x: (B, H, W) ints in [-1..vocab_size-2], where -1 is padding.
@@ -126,7 +126,10 @@ class StateEncoder(nn.Module):
             most_common_color, least_common_color: (B,) ints in [0..vocab_size-1]
             num_unique_colors: (B,) ints in [0..vocab_size]
         Returns:
-            (B, latent_dim) pooled CLS representation.
+            tuple: (tokens, causal_mask)
+                - tokens: (B, seq_len, latent_dim) all token representations
+                - causal_mask: (B, seq_len, seq_len) boolean causal attention mask
+                  where True means mask out (prevent attention)
         """
 
         if x.dim() == 4 and x.shape[1] == 1:
@@ -155,30 +158,95 @@ class StateEncoder(nn.Module):
         x_flat = x_emb.view(B, H*W, self.emb_dim)                     # (B, H*W, emb_dim)
         grid_mask = grid_mask.view(B, H*W)                            # (B, H*W)
 
-        # 3) shape + stats + CLS tokens
+        # 3) shape + stats tokens (NO CLS token)
         row_tok = self.row_shape_embed(shape_h - 1)                   # (B, emb_dim)
         col_tok = self.col_shape_embed(shape_w - 1)                   # (B, emb_dim)
         mc_tok  = self.most_common_embed(most_common_color)           # (B, emb_dim)
         lc_tok  = self.least_common_embed(least_common_color)         # (B, emb_dim)
         uq_tok  = self.unique_count_embed(num_unique_colors)          # (B, emb_dim)
 
-        cls = self.cls_token.expand(B, -1, -1)                        # (B,1,emb_dim)
         extras = torch.stack([row_tok, col_tok, mc_tok, lc_tok, uq_tok], dim=1)  # (B,5,emb_dim)
-        seq = torch.cat([cls, extras, x_flat], dim=1)                 # (B,1+5+H*W,emb_dim)
+        seq = torch.cat([extras, x_flat], dim=1)                      # (B,5+H*W,emb_dim)
 
         # 4) dropout
         seq = self.emb_drop(seq)
 
         # 5) padding mask (True = mask out)
-        extras_mask = torch.zeros(B, 6, dtype=torch.bool, device=x.device)  # CLS+5 always kept
-        full_mask = torch.cat([extras_mask, ~grid_mask], dim=1)             # (B,1+5+H*W)
+        extras_mask = torch.zeros(B, 5, dtype=torch.bool, device=x.device)  # 5 metadata tokens always kept
+        padding_mask = torch.cat([extras_mask, ~grid_mask], dim=1)          # (B,5+H*W)
 
-        # 6) apply pre‐norm transformer blocks
+        # 6) create causal mask for variable-sized grids
+        # Causal mask prevents attention to positions beyond valid grid boundaries
+        # For each sample, we create a mask based on actual grid dimensions
+        seq_len = 5 + H * W  # 5 metadata tokens + H*W grid tokens
+        causal_mask = torch.zeros(B, seq_len, seq_len, dtype=torch.bool, device=x.device)
+        
+        grid_start_idx = 5  # Grid tokens start after 5 metadata tokens
+        
+        # Create grid position indices
+        grid_positions = torch.arange(H * W, device=x.device)  # (H*W,)
+        
+        for b in range(B):
+            actual_h = shape_h[b].item()
+            actual_w = shape_w[b].item()
+            valid_grid_size = actual_h * actual_w
+            
+            # Invalid positions are those beyond the valid grid size
+            # Since grid is flattened row-major, positions >= valid_grid_size are invalid
+            invalid_positions = grid_positions >= valid_grid_size  # (H*W,)
+            
+            # For grid tokens that are invalid, mask everything (including metadata)
+            invalid_token_indices = grid_start_idx + grid_positions[invalid_positions]
+            for idx in invalid_token_indices:
+                causal_mask[b, idx, :] = True
+            
+            # For valid grid tokens, they can attend to:
+            # - All metadata tokens (first 5) - keep unmasked
+            # - Only valid grid positions - mask invalid ones
+            valid_token_indices = grid_start_idx + grid_positions[~invalid_positions]
+            invalid_target_indices = grid_start_idx + grid_positions[invalid_positions]
+            
+            # Mask out invalid grid targets for valid tokens
+            for token_idx in valid_token_indices:
+                causal_mask[b, token_idx, invalid_target_indices] = True
+            
+            # Metadata tokens (first 5) can attend to everything
+            # (They're already False, which is correct)
+
+        # 7) apply pre-norm transformer blocks
+        # Note: We use padding_mask for key_padding_mask (handles padding)
+        # Causal mask would be used if we implement custom attention, but MultiheadAttention
+        # uses key_padding_mask, so we return causal_mask separately for potential future use
         out = seq
         for layer in self.layers:
-            out = layer(out, src_key_padding_mask=full_mask)
+            out = layer(out, src_key_padding_mask=padding_mask)
 
-        # 7) pool CLS
-        cls_out = out[:, 0, :]                                          # (B, emb_dim)
-        cls_out = self.final_norm(cls_out)                              # Apply final LayerNorm
-        return self.to_latent(cls_out)                                  # (B, latent_dim)
+        # 8) apply final normalization to all tokens
+        out = self.final_norm(out)                                      # (B, seq_len, emb_dim)
+        
+        # 9) project to latent dimension
+        tokens = self.to_latent(out)                                    # (B, seq_len, latent_dim)
+        
+        return tokens, causal_mask
+    
+    def pool_tokens(self, tokens: torch.Tensor, causal_mask: torch.Tensor = None, 
+                    method: str = 'mean') -> torch.Tensor:
+        """
+        Helper method to pool all tokens into a single vector for backward compatibility.
+        
+        Args:
+            tokens: (B, seq_len, latent_dim) token representations
+            causal_mask: (B, seq_len, seq_len) optional causal mask
+            method: 'mean' or 'first' - pooling method
+        
+        Returns:
+            (B, latent_dim) pooled representation
+        """
+        if method == 'mean':
+            # Mean pooling over sequence dimension
+            return tokens.mean(dim=1)
+        elif method == 'first':
+            # Use first token (first metadata token)
+            return tokens[:, 0, :]
+        else:
+            raise ValueError(f"Unknown pooling method: {method}")
