@@ -4,8 +4,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-import yaml
 import wandb
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 from src.models.state_encoder import StateEncoder
 import torch.nn.functional as F
@@ -105,18 +107,15 @@ class StepDistanceMLP(nn.Module):
         combined = torch.cat([state_encoding, target_encoding], dim=-1)
         return self.mlp(combined)
 
-def train_step_distance_mlp():
-    # Load config
-    with open('config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-    
+def train_step_distance_mlp(cfg: DictConfig):
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    wandb.init(project="step-distance-mlp", config=config)
+    wandb_config = OmegaConf.to_container(cfg, resolve=True)
+    wandb.init(project="step-distance-mlp", config=wandb_config)
     
     # Get required parameters from config
-    buffer_path = config['buffer_path']
-    encoder_params = config['encoder_params']
+    buffer_path = cfg.data.buffer_path
+    encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
     image_size = encoder_params.get('image_size', [10, 10])
     input_channels = encoder_params.get('input_channels', 1)
     
@@ -128,32 +127,33 @@ def train_step_distance_mlp():
     # Use the wrapper dataset that includes step_distance_to_target
     dataset = StepDistanceDataset(
         buffer_path=buffer_path,
-        num_color_selection_fns=config['action_embedders']['action_color_embedder']['num_actions'],
-        num_selection_fns=config['action_embedders']['action_selection_embedder']['num_actions'],
-        num_transform_actions=config['action_embedders']['action_transform_embedder']['num_actions'],
-        num_arc_colors=config['num_arc_colors'],
+        num_color_selection_fns=cfg.model.predictors.action_embedders.action_color_embedder.num_actions,
+        num_selection_fns=cfg.model.predictors.action_embedders.action_selection_embedder.num_actions,
+        num_transform_actions=cfg.model.predictors.action_embedders.action_transform_embedder.num_actions,
+        num_arc_colors=cfg.num_arc_colors,
         state_shape=state_shape,
         mode='end_to_end'
     )
     
     train_size = int(0.8 * len(dataset))
     train_dataset, val_dataset = random_split(dataset, [train_size, len(dataset) - train_size])
-    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=config['batch_size'])
+    train_loader = DataLoader(train_dataset, batch_size=cfg.training.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.training.batch_size)
     
     # Models
     state_encoder = StateEncoder(
         image_size=image_size,
         input_channels=input_channels,
-        latent_dim=config['latent_dim'],
-        encoder_params=config['encoder_params']
+        latent_dim=cfg.latent_dim,
+        encoder_params=encoder_params
     ).to(device)
     
-    step_distance_mlp = StepDistanceMLP(config['latent_dim']).to(device)
+    step_distance_mlp = StepDistanceMLP(cfg.latent_dim).to(device)
     
     # Load pretrained encoder if available
-    if config.get('use_pretrained_encoder', False):
-        pretrained_path = config.get('pretrained_encoder_path', 'weights/best_model_state_encoder.pth')
+    use_pretrained_encoder = OmegaConf.select(cfg, 'use_pretrained_encoder', default=False)
+    if use_pretrained_encoder:
+        pretrained_path = OmegaConf.select(cfg, 'pretrained_encoder_path', default='weights/best_model_state_encoder.pth')
         try:
             checkpoint = torch.load(pretrained_path, map_location=device)
             state_encoder.load_state_dict(checkpoint.get('state_encoder', checkpoint))
@@ -161,16 +161,16 @@ def train_step_distance_mlp():
             pass
     
     # Optimizer
-    optimizer = optim.Adam(list(step_distance_mlp.parameters()) + list(state_encoder.parameters()), lr=config['learning_rate'])
+    optimizer = optim.Adam(list(step_distance_mlp.parameters()) + list(state_encoder.parameters()), lr=cfg.training.learning_rate)
     
     # Training
     # print("Starting training loop...")
-    for epoch in range(config['num_epochs']):
-        # print(f"Epoch {epoch + 1}/{config['num_epochs']}")
+    for epoch in range(cfg.training.num_epochs):
+        # print(f"Epoch {epoch + 1}/{cfg.training.num_epochs}")
         state_encoder.train()
         step_distance_mlp.train()
         
-        for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{config['num_epochs']}")):
+        for i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{cfg.training.num_epochs}")):
             
             state = batch['state'].to(device)
             target_state = batch['target_state'].to(device)
@@ -216,7 +216,7 @@ def train_step_distance_mlp():
             optimizer.step()
             # print(f"    Step completed!")
             
-            if i % config['log_interval'] == 0:
+            if i % cfg.training.log_interval == 0:
                 # Calculate validation metrics for logging
                 state_encoder.eval()
                 step_distance_mlp.eval()
@@ -327,4 +327,7 @@ def train_step_distance_mlp():
     wandb.finish()
 
 if __name__ == "__main__":
-    train_step_distance_mlp() 
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config")
+    train_step_distance_mlp(cfg) 
