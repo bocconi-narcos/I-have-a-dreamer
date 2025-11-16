@@ -1,27 +1,22 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.data.replay_buffer_dataset import ReplayBufferDataset
-import yaml
 
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
-def inspect_states():
+def inspect_states(cfg: DictConfig):
     """Inspect and visualize the actual state data from the buffer."""
     print("🔍 Inspecting Replay Buffer States")
     print("=" * 50)
     
-    # Load config
-    config = load_config()
-    
     # Buffer setup
-    buffer_path = config['buffer_path']
+    buffer_path = cfg.data.buffer_path
     fast_buffer_path = buffer_path
     
     # State shape
-    encoder_params = config['encoder_params']
+    encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
     image_size = encoder_params.get('image_size', [10, 10])
     input_channels = encoder_params.get('input_channels', 1)
     if isinstance(image_size, int):
@@ -31,16 +26,16 @@ def inspect_states():
     
     print(f"📊 Buffer Path: {fast_buffer_path}")
     print(f"📐 State Shape: {state_shape}")
-    print(f"🎨 Number of Colors: {config['num_arc_colors']}")
+    print(f"🎨 Number of Colors: {cfg.num_arc_colors}")
     print()
     
     # Load dataset
     dataset = ReplayBufferDataset(
         buffer_path=fast_buffer_path,
-        num_color_selection_fns=config['action_embedders']['action_color_embedder']['num_actions'],
-        num_selection_fns=config['action_embedders']['action_selection_embedder']['num_actions'],
-        num_transform_actions=config['action_embedders']['action_transform_embedder']['num_actions'],
-        num_arc_colors=config['num_arc_colors'],
+        num_color_selection_fns=cfg.model.predictors.action_embedders.action_color_embedder.num_actions,
+        num_selection_fns=cfg.model.predictors.action_embedders.action_selection_embedder.num_actions,
+        num_transform_actions=cfg.model.predictors.action_embedders.action_transform_embedder.num_actions,
+        num_arc_colors=cfg.num_arc_colors,
         state_shape=state_shape,
         mode='end_to_end'
     )
@@ -159,4 +154,7 @@ def inspect_states():
     print("✅ State inspection complete!")
 
 if __name__ == "__main__":
-    inspect_states() 
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config")
+    inspect_states(cfg) 
