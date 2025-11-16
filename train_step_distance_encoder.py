@@ -24,15 +24,13 @@ import os
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-import yaml
 import wandb
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.models.state_encoder import StateEncoder
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
-
-def load_config(config_path="config_autoencoder.yaml"):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
 
 class StepDistanceDataset(ReplayBufferDataset):
     """Extended dataset that includes target_state and step_distance_to_target"""
@@ -258,16 +256,15 @@ def evaluate(encoder, dataloader, device, alpha=1.0):
         'step_distance': avg_step_distance
     }
 
-def train_step_distance_encoder():
-    config = load_config()
-    buffer_path = config['buffer_path']
-    latent_dim = config['latent_dim']
-    encoder_params = config['encoder_params']
-    batch_size = config['batch_size']
-    num_epochs = config['num_epochs']
-    learning_rate = config['learning_rate']
-    num_workers = config['num_workers']
-    log_interval = config['log_interval']
+def train_step_distance_encoder(cfg: DictConfig):
+    buffer_path = cfg.data.autoencoder.buffer_path
+    latent_dim = cfg.latent_dim
+    encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
+    batch_size = cfg.training.autoencoder.batch_size
+    num_epochs = cfg.training.autoencoder.num_epochs
+    learning_rate = cfg.training.autoencoder.learning_rate
+    num_workers = cfg.training.autoencoder.num_workers
+    log_interval = cfg.training.autoencoder.log_interval
     
     # Step distance specific parameters
     alpha = 1.0  # Decay parameter for expected similarity
@@ -282,9 +279,9 @@ def train_step_distance_encoder():
     # Use the extended dataset
     dataset = StepDistanceDataset(
         buffer_path=buffer_path,
-        num_color_selection_fns=config['num_color_selection_fns'],
-        num_selection_fns=config['num_selection_fns'],
-        num_transform_actions=config['num_transform_actions'],
+        num_color_selection_fns=cfg.num_color_selection_fns,
+        num_selection_fns=cfg.num_selection_fns,
+        num_transform_actions=cfg.num_transform_actions,
         num_arc_colors=11,
         state_shape=state_shape,
         mode='full'
@@ -328,7 +325,7 @@ def train_step_distance_encoder():
     save_path = 'best_model_step_distance_encoder.pth'
     
     # Initialize wandb
-    wandb_config = config.copy()
+    wandb_config = OmegaConf.to_container(cfg, resolve=True)
     wandb_config['alpha'] = alpha
     wandb.init(project="step-distance-encoder", config=wandb_config)
 
@@ -415,4 +412,7 @@ def train_step_distance_encoder():
     wandb.finish()
 
 if __name__ == "__main__":
-    train_step_distance_encoder()
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config_autoencoder")
+    train_step_distance_encoder(cfg)
