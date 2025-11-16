@@ -3,95 +3,87 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-import yaml
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.models.state_encoder import StateEncoder
-from models.predictors.color_predictor import ColorPredictor
+from src.models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder import MaskEncoder
-from models.predictors.selection_mask_predictor import SelectionMaskPredictor
-from models.predictors.next_state_predictor import NextStatePredictor
-from models.predictors.reward_predictor import RewardPredictor
-from models.predictors.continuation_predictor import ContinuationPredictor
+from src.models.predictors.selection_mask_predictor import SelectionMaskPredictor
+from src.models.predictors.next_state_predictor import NextStatePredictor
+from src.models.predictors.reward_predictor import RewardPredictor
+from src.models.predictors.continuation_predictor import ContinuationPredictor
 from src.losses.vicreg import VICRegLoss
 from src.data import ReplayBufferDataset
 import traceback
 
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
-
 def one_hot(indices, num_classes):
     return torch.nn.functional.one_hot(indices, num_classes=num_classes).float()
 
-def train_full_model():
+def train_full_model(cfg: DictConfig):
     try:
         print("Loading configuration...")
-        config = load_config()
         print("Configuration loaded successfully.")
-        buffer_path = config['buffer_path']
-        encoder_type = config['encoder_type']
-        latent_dim = config['latent_dim']
-        encoder_params = config['encoder_params'][encoder_type]
-        num_color_selection_fns = config['num_color_selection_fns']
-        num_selection_fns = config['num_selection_fns']
-        num_transform_actions = config['num_transform_actions']
-        num_arc_colors = config['num_arc_colors']
-        color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
+        buffer_path = cfg.data.buffer_path
+        encoder_type = cfg.encoder_type
+        latent_dim = cfg.latent_dim
+        encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
+        num_color_selection_fns = cfg.model.predictors.action_embedders.action_color_embedder.num_actions
+        num_selection_fns = cfg.model.predictors.action_embedders.action_selection_embedder.num_actions
+        num_transform_actions = cfg.model.predictors.action_embedders.action_transform_embedder.num_actions
+        num_arc_colors = cfg.num_arc_colors
+        color_predictor_hidden_dim = cfg.model.predictors.color_predictor.hidden_dim
 
         # Selection mask config
-        selection_cfg = config['selection_mask']
-        mask_encoder_type = selection_cfg['mask_encoder_type']
-        mask_encoder_params = selection_cfg['mask_encoder_params'][mask_encoder_type]
-        latent_mask_dim = selection_cfg['latent_mask_dim']
-        transformer_depth_selection = selection_cfg['transformer_depth']
-        transformer_heads_selection = selection_cfg['transformer_heads']
-        transformer_dim_head_selection = selection_cfg['transformer_dim_head']
-        transformer_mlp_dim_selection = selection_cfg['transformer_mlp_dim']
-        transformer_dropout_selection = selection_cfg['transformer_dropout']
-        use_vicreg_selection = selection_cfg['use_vicreg']
-        vicreg_sim_coeff_selection = selection_cfg['vicreg_sim_coeff']
-        vicreg_std_coeff_selection = selection_cfg['vicreg_std_coeff']
-        vicreg_cov_coeff_selection = selection_cfg['vicreg_cov_coeff']
+        mask_encoder_params = OmegaConf.to_container(cfg.model.predictors.selection_mask.mask_encoder_params, resolve=True)
+        latent_mask_dim = cfg.model.predictors.selection_mask.latent_mask_dim
+        transformer_depth_selection = cfg.model.predictors.selection_mask.mask_predictor_params.transformer_depth
+        transformer_heads_selection = cfg.model.predictors.selection_mask.mask_predictor_params.transformer_heads
+        transformer_dim_head_selection = cfg.model.predictors.selection_mask.mask_predictor_params.transformer_dim_head
+        transformer_mlp_dim_selection = cfg.model.predictors.selection_mask.mask_predictor_params.transformer_mlp_dim
+        transformer_dropout_selection = cfg.model.predictors.selection_mask.mask_predictor_params.transformer_dropout
+        use_vicreg_selection = cfg.model.predictors.selection_mask.use_vicreg
+        vicreg_sim_coeff_selection = cfg.model.predictors.selection_mask.vicreg_sim_coeff
+        vicreg_std_coeff_selection = cfg.model.predictors.selection_mask.vicreg_std_coeff
+        vicreg_cov_coeff_selection = cfg.model.predictors.selection_mask.vicreg_cov_coeff
 
         # Next state config
-        next_state_cfg = config['next_state']
-        latent_mask_dim_next_state = next_state_cfg['latent_mask_dim']
-        transformer_depth_next_state = next_state_cfg['transformer_depth']
-        transformer_heads_next_state = next_state_cfg['transformer_heads']
-        transformer_dim_head_next_state = next_state_cfg['transformer_dim_head']
-        transformer_mlp_dim_next_state = next_state_cfg['transformer_mlp_dim']
-        transformer_dropout_next_state = next_state_cfg['transformer_dropout']
-        use_vicreg_next_state = next_state_cfg['use_vicreg']
-        vicreg_sim_coeff_next_state = next_state_cfg['vicreg_sim_coeff']
-        vicreg_std_coeff_next_state = next_state_cfg['vicreg_std_coeff']
-        vicreg_cov_coeff_next_state = next_state_cfg['vicreg_cov_coeff']
+        latent_mask_dim_next_state = cfg.model.predictors.next_state.latent_mask_dim
+        transformer_depth_next_state = cfg.model.predictors.next_state.transformer_depth
+        transformer_heads_next_state = cfg.model.predictors.next_state.transformer_heads
+        transformer_dim_head_next_state = cfg.model.predictors.next_state.transformer_dim_head
+        transformer_mlp_dim_next_state = cfg.model.predictors.next_state.transformer_mlp_dim
+        transformer_dropout_next_state = cfg.model.predictors.next_state.transformer_dropout
+        use_vicreg_next_state = cfg.model.predictors.next_state.use_vicreg
+        vicreg_sim_coeff_next_state = cfg.model.predictors.next_state.vicreg_sim_coeff
+        vicreg_std_coeff_next_state = cfg.model.predictors.next_state.vicreg_std_coeff
+        vicreg_cov_coeff_next_state = cfg.model.predictors.next_state.vicreg_cov_coeff
 
         # Reward predictor config
-        reward_cfg = config['reward_predictor']
-        reward_latent_dim = reward_cfg['latent_dim']
-        reward_hidden_dim = reward_cfg['hidden_dim']
-        reward_transformer_depth = reward_cfg['transformer_depth']
-        reward_transformer_heads = reward_cfg['transformer_heads']
-        reward_transformer_dim_head = reward_cfg['transformer_dim_head']
-        reward_transformer_mlp_dim = reward_cfg['transformer_mlp_dim']
-        reward_transformer_dropout = reward_cfg['transformer_dropout']
-        reward_proj_dim = reward_cfg.get('proj_dim', None)
+        reward_latent_dim = cfg.model.predictors.reward_predictor.latent_dim
+        reward_hidden_dim = cfg.model.predictors.reward_predictor.hidden_dim
+        reward_transformer_depth = cfg.model.predictors.reward_predictor.transformer_depth
+        reward_transformer_heads = cfg.model.predictors.reward_predictor.transformer_heads
+        reward_transformer_dim_head = cfg.model.predictors.reward_predictor.transformer_dim_head
+        reward_transformer_mlp_dim = cfg.model.predictors.reward_predictor.transformer_mlp_dim
+        reward_transformer_dropout = cfg.model.predictors.reward_predictor.transformer_dropout
+        reward_proj_dim = OmegaConf.select(cfg.model.predictors.reward_predictor, 'proj_dim', default=None)
 
         # Continuation predictor config
-        continuation_cfg = config['continuation_predictor']
-        continuation_latent_dim = continuation_cfg['latent_dim']
-        continuation_hidden_dim = continuation_cfg['hidden_dim']
-        continuation_transformer_depth = continuation_cfg['transformer_depth']
-        continuation_transformer_heads = continuation_cfg['transformer_heads']
-        continuation_transformer_dim_head = continuation_cfg['transformer_dim_head']
-        continuation_transformer_mlp_dim = continuation_cfg['transformer_mlp_dim']
-        continuation_transformer_dropout = continuation_cfg['transformer_dropout']
-        continuation_proj_dim = continuation_cfg.get('proj_dim', None)
+        continuation_latent_dim = cfg.model.predictors.continuation_predictor.latent_dim
+        continuation_hidden_dim = cfg.model.predictors.continuation_predictor.hidden_dim
+        continuation_transformer_depth = cfg.model.predictors.continuation_predictor.transformer_depth
+        continuation_transformer_heads = cfg.model.predictors.continuation_predictor.transformer_heads
+        continuation_transformer_dim_head = cfg.model.predictors.continuation_predictor.transformer_dim_head
+        continuation_transformer_mlp_dim = cfg.model.predictors.continuation_predictor.transformer_mlp_dim
+        continuation_transformer_dropout = cfg.model.predictors.continuation_predictor.transformer_dropout
+        continuation_proj_dim = OmegaConf.select(cfg.model.predictors.continuation_predictor, 'proj_dim', default=None)
 
-        batch_size = config['batch_size']
-        num_epochs = config['num_epochs']
-        learning_rate = config['learning_rate']
-        num_workers = config['num_workers']
-        log_interval = config['log_interval']
+        batch_size = cfg.training.batch_size
+        num_epochs = cfg.training.num_epochs
+        learning_rate = cfg.training.learning_rate
+        num_workers = cfg.training.num_workers
+        log_interval = cfg.training.log_interval
 
         image_size = encoder_params.get('image_size', [10, 10])
         input_channels = encoder_params.get('input_channels', 1)
@@ -130,9 +122,14 @@ def train_full_model():
             print('Using device: CPU')
 
         print("Initializing models...")
-        state_encoder = StateEncoder(encoder_type, latent_dim=latent_dim, **encoder_params).to(device)
+        state_encoder = StateEncoder(
+            image_size=image_size,
+            input_channels=input_channels,
+            latent_dim=latent_dim,
+            encoder_params=encoder_params
+        ).to(device)
         color_predictor = ColorPredictor(latent_dim + num_color_selection_fns, num_arc_colors, color_predictor_hidden_dim).to(device)
-        mask_encoder = MaskEncoder(mask_encoder_type, latent_dim=latent_mask_dim, **mask_encoder_params).to(device)
+        mask_encoder = MaskEncoder(**mask_encoder_params).to(device)
         
         # Updated SelectionMaskPredictor initialization
         selection_mask_predictor = SelectionMaskPredictor(
@@ -401,4 +398,7 @@ def train_full_model():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    train_full_model() 
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config")
+    train_full_model(cfg) 
