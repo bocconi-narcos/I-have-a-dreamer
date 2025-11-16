@@ -1,0 +1,114 @@
+# @package model.predictors
+
+# Action Embedders
+action_embedders:
+  action_color_embedder:
+    num_actions: 23  # Number of color selection functions in DSL
+    embed_dim: 32
+    dropout_p: 0.2
+  
+  action_selection_embedder:
+    num_actions: 6  # Number of selection functions in DSL
+    embed_dim: 32
+    dropout_p: 0.2
+  
+  action_transform_embedder:
+    num_actions: 18  # Number of transform actions in DSL
+    embed_dim: 32
+    dropout_p: 0.2
+
+# Color Predictor Module
+color_predictor:
+  hidden_dim: 256  # Should match state encoder hidden dim for attention
+
+# Selection Mask Prediction Module
+selection_mask:
+  latent_mask_dim: 256  # Should match state encoder hidden dim for attention
+  mask_encoder_params:
+    depth: 4
+    heads: 8
+    mlp_dim: 256
+    dropout: 0.1
+    emb_dropout: 0.1
+    image_size: [10, 10]
+    vocab_size: 3
+    emb_dim: 128
+  mask_predictor_params:
+    transformer_depth: 2
+    transformer_heads: 2
+    transformer_dim_head: 32
+    transformer_mlp_dim: 64
+    transformer_dropout: 0.1
+  use_vicreg: false
+  vicreg_sim_coeff: 5
+  vicreg_std_coeff: 25
+  vicreg_cov_coeff: 0.1
+
+# Next State Predictor Module
+next_state:
+  latent_mask_dim: 0  # Set to 0 if not using mask
+  transformer_depth: 2
+  transformer_heads: 2
+  transformer_dim_head: 64
+  transformer_mlp_dim: 128
+  transformer_dropout: 0.1
+  loss_type: "mse"  # Options: "mse", "vicreg"
+  use_vicreg: false
+  vicreg_sim_coeff: 25.0
+  vicreg_std_coeff: 25.0
+  vicreg_cov_coeff: 1.0
+
+# Reward Predictor Module (SOTA Transformer-based)
+reward_predictor:
+  latent_dim: 256
+  hidden_dim: 256
+  transformer_depth: 4
+  transformer_heads: 8
+  transformer_dim_head: 64
+  transformer_mlp_dim: 512
+  transformer_dropout: 0.1
+  proj_dim: null  # If provided, project latents to this dim
+  use_uncertainty: true
+  use_contrastive: true
+  use_multi_scale: true
+
+# Continuation Predictor Module
+continuation_predictor:
+  latent_dim: 128
+  hidden_dim: 128
+  transformer_depth: 2
+  transformer_heads: 2
+  transformer_dim_head: 64
+  transformer_mlp_dim: 128
+  transformer_dropout: 0.1
+  proj_dim: null
+
+# Decoder Parameters (used when use_decoder_loss is true)
+decoder_params:
+  depth: 4
+  heads: 8
+  mlp_dim: 512
+  transformer_dim: 64
+  dropout: 0.2
+  colors_vocab_size: 12
+
+mask_decoder_params:
+  depth: 4
+  heads: 8
+  mlp_dim: 256
+  transformer_dim: 64
+  dropout: 0.1
+  colors_vocab_size: 3
+
+# VICReg Configuration
+vicreg:
+  selection:
+    weight: 1
+    params:
+      sim_coeff: 5
+      std_coeff: 25
+      cov_coeff: 0.1
+      eps: 0.0001
+      proj_hidden_dim: 512
+      proj_output_dim: 512
+
