@@ -1,0 +1,8 @@
+# @package training.autoencoder
+
+batch_size: 256
+num_epochs: 150
+learning_rate: 0.0004
+num_workers: 0
+log_interval: 10
+
