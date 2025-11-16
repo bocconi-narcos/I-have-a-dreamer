@@ -3,8 +3,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-import yaml
 import pickle
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
 from src.models.state_encoder import StateEncoder
 from src.models.predictors.color_predictor import ColorPredictor, TransformerColorPredictor, CrossAttentionColorPredictor
 from src.data import ReplayBufferDataset
@@ -12,11 +15,6 @@ from torch.utils.data import Dataset
 from src.models.action_embed import ActionEmbedder
 import wandb
 from tqdm import tqdm
-
-# --- Config Loader ---
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
 
 
 # --- One-hot encoding utility ---
@@ -86,7 +84,7 @@ def evaluate(model, encoder, action_embedder, dataloader, device, criterion, num
 
 
 # --- Main Training Loop ---
-def train_color_predictor():
+def train_color_predictor(cfg: DictConfig):
     """
     Main training loop for the color predictor. Loads config, prepares dataset, builds models, and trains.
     The buffer is expected to be a list of dicts with the required keys. The training loop:
@@ -94,28 +92,27 @@ def train_color_predictor():
         2. Passes state through the configurable state encoder.
         3. Concatenates state embedding and color action encoding, passes through MLP.
         4. Computes cross-entropy loss with the true colour.
-    All model choices and hyperparameters are loaded from unified_config.yaml.
+    All model choices and hyperparameters are loaded from Hydra config.
     """
-    config                                  = load_config()
-    buffer_path                             = config['buffer_path']
-    #encoder_type = config['encoder_type']
-    latent_dim                              = config['latent_dim']
+    # Extract config values using dot notation
+    buffer_path                             = cfg.data.buffer_path
+    latent_dim                              = cfg.latent_dim
     
-    encoder_params                          = config['encoder_params']
-    use_pretrained_encoder                  = config.get('use_pretrained_encoder', False)
-    pretrained_encoder_path                 = config.get('pretrained_encoder_path', 'best_model_autoencoder.pth')
-    freeze_pretrained_encoder               = config.get('freeze_pretrained_encoder', False)
-    num_color_selection_fns                 = config['action_embedders']['action_color_embedder']['num_actions']
-    num_selection_fns                       = config['action_embedders']['action_selection_embedder']['num_actions']
-    num_transform_actions                   = config['action_embedders']['action_transform_embedder']['num_actions']
-    num_arc_colors                          = config['num_arc_colors']
-    color_predictor_hidden_dim              = config['color_predictor']['hidden_dim']
-    batch_size                              = config['batch_size']
-    num_epochs                              = config['num_epochs']
-    learning_rate                           = config['learning_rate']
-    num_workers                             = config['num_workers']
-    log_interval                            = config['log_interval']
-    action_embedding_dim                    = config['action_embedders']['action_color_embedder']['embed_dim']
+    encoder_params                          = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
+    use_pretrained_encoder                  = OmegaConf.select(cfg, 'use_pretrained_encoder', default=False)
+    pretrained_encoder_path                 = OmegaConf.select(cfg, 'pretrained_encoder_path', default='best_model_autoencoder.pth')
+    freeze_pretrained_encoder               = OmegaConf.select(cfg, 'freeze_pretrained_encoder', default=False)
+    num_color_selection_fns                 = cfg.model.predictors.action_embedders.action_color_embedder.num_actions
+    num_selection_fns                       = cfg.model.predictors.action_embedders.action_selection_embedder.num_actions
+    num_transform_actions                   = cfg.model.predictors.action_embedders.action_transform_embedder.num_actions
+    num_arc_colors                          = cfg.num_arc_colors
+    color_predictor_hidden_dim              = cfg.model.predictors.color_predictor.hidden_dim
+    batch_size                              = cfg.training.batch_size
+    num_epochs                              = cfg.training.num_epochs
+    learning_rate                           = cfg.training.learning_rate
+    num_workers                             = cfg.training.num_workers
+    log_interval                            = cfg.training.log_interval
+    action_embedding_dim                    = cfg.model.predictors.action_embedders.action_color_embedder.embed_dim
 
     # State shape (channels, H, W) or (H, W)
     image_size                              = encoder_params.get('image_size', [10, 10])
@@ -227,10 +224,12 @@ def train_color_predictor():
 
     best_val_loss                           = float('inf')
     epochs_no_improve                       = 0
-    patience                                = 50
-    save_path                               = os.path.join('weights', 'best_model_color_predictor.pth')
+    patience                                = OmegaConf.select(cfg, 'color_predictor_training.early_stopping_patience', default=50)
+    save_path                               = os.path.join('weights', OmegaConf.select(cfg, 'color_predictor_training.best_model_save_path', default='best_model_color_predictor.pth'))
     os.makedirs('weights', exist_ok=True)
-    wandb.init(project="color_predictor", config=config)
+    # Convert OmegaConf to dict for wandb
+    wandb_config = OmegaConf.to_container(cfg, resolve=True)
+    wandb.init(project="color_predictor", config=wandb_config)
     
     print(f"\nStarting training for {num_epochs} epochs...")
     print(f"Device: {device}")
@@ -380,4 +379,15 @@ def train_color_predictor():
     wandb.finish()
 
 if __name__ == "__main__":
-    train_color_predictor() 
+    from hydra import compose, initialize
+    from hydra.core.global_hydra import GlobalHydra
+    
+    # Initialize Hydra if not already initialized
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    
+    # Compose config
+    cfg = compose(config_name="config")
+    
+    # Run training
+    train_color_predictor(cfg) 
