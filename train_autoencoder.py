@@ -3,17 +3,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-import yaml
 import wandb
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.models.state_encoder import StateEncoder
 from src.models.state_decoder import StateDecoder
 from src.data.replay_buffer_dataset import ReplayBufferDataset
 import torch.nn.functional as F
 import subprocess
-
-def load_config(config_path="config_autoencoder.yaml"):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
 
 def autoencoder_loss(decoder_output, original_grid, shape_h, shape_w, most_common, least_common, unique_count):
     mask = (original_grid != -1)
@@ -86,8 +84,7 @@ def evaluate(encoder, decoder, dataloader, device):
         'color_stats_loss': avg_color_stats_loss
     }
 
-def train_autoencoder():
-    config = load_config()
+def train_autoencoder(cfg: DictConfig):
     # --- WANDB INIT EARLY ---
     try:
         if not wandb.run:
@@ -95,23 +92,24 @@ def train_autoencoder():
     except Exception as e:
         print(f"wandb login failed or already logged in: {e}")
     # Log all config values to wandb at the very start
-    wandb.init(project="autoencoder", config=config)
+    wandb_config = OmegaConf.to_container(cfg, resolve=True)
+    wandb.init(project="autoencoder", config=wandb_config)
 
-    buffer_path = config['buffer_path']
+    buffer_path = cfg.data.autoencoder.buffer_path
     fast_buffer_path = buffer_path + '.fast.pt'
     if not os.path.exists(fast_buffer_path):
         print(f"Fast buffer {fast_buffer_path} not found. Preprocessing...")
         subprocess.run(['python', 'scripts/preprocess_buffer.py', buffer_path, fast_buffer_path], check=True)
     else:
         print(f"Using fast buffer: {fast_buffer_path}")
-    latent_dim = config['latent_dim']
-    encoder_params = config['encoder_params']
-    decoder_params = config['decoder_params']
-    batch_size = config['batch_size']
-    num_epochs = config['num_epochs']
-    learning_rate = config['learning_rate']
-    num_workers = config['num_workers']
-    log_interval = config['log_interval']
+    latent_dim = cfg.latent_dim
+    encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
+    decoder_params = OmegaConf.to_container(cfg.model.decoder.decoder_params, resolve=True)
+    batch_size = cfg.training.autoencoder.batch_size
+    num_epochs = cfg.training.autoencoder.num_epochs
+    learning_rate = cfg.training.autoencoder.learning_rate
+    num_workers = cfg.training.autoencoder.num_workers
+    log_interval = cfg.training.autoencoder.log_interval
 
     image_size = encoder_params.get('image_size', [10, 10])
     input_channels = encoder_params.get('input_channels', 1)
@@ -122,9 +120,9 @@ def train_autoencoder():
 
     dataset = ReplayBufferDataset(
         buffer_path=fast_buffer_path,
-        num_color_selection_fns=config['num_color_selection_fns'],
-        num_selection_fns=config['num_selection_fns'],
-        num_transform_actions=config['num_transform_actions'],
+        num_color_selection_fns=cfg.num_color_selection_fns,
+        num_selection_fns=cfg.num_selection_fns,
+        num_transform_actions=cfg.num_transform_actions,
         num_arc_colors=11,
         state_shape=state_shape,
         mode='full'
@@ -144,9 +142,9 @@ def train_autoencoder():
         device = torch.device("cpu")
 
     # --- Load pretrained encoder if specified ---
-    use_pretrained_encoder = config.get('use_pretrained_encoder', False)
-    pretrained_encoder_path = config.get('pretrained_encoder_path', 'best_model_autoencoder.pth')
-    freeze_pretrained_encoder = config.get('freeze_pretrained_encoder', False)
+    use_pretrained_encoder = OmegaConf.select(cfg, 'use_pretrained_encoder', default=False)
+    pretrained_encoder_path = OmegaConf.select(cfg, 'pretrained_encoder_path', default='best_model_autoencoder.pth')
+    freeze_pretrained_encoder = OmegaConf.select(cfg, 'freeze_pretrained_encoder', default=False)
 
     state_encoder = StateEncoder(
         image_size=image_size,
@@ -280,4 +278,7 @@ def train_autoencoder():
         wandb.finish()
 
 if __name__ == "__main__":
-    train_autoencoder()
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config_autoencoder")
+    train_autoencoder(cfg)
