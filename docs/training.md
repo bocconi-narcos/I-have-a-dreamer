@@ -20,4 +20,6 @@ The training loop processes the buffer in batches and updates the model to predi
 - Reports loss and accuracy for both color and transformation prediction.
 
 ## Customization
-- All hyperparameters and model choices are set in the relevant config YAML file. 
+- All hyperparameters and model choices are configured via Hydra config files in `conf/` directory.
+- Override any parameter via command-line: `python train_script.py training.batch_size=128`
+- See [Configuration Guide](./configuration.md) for details. 
