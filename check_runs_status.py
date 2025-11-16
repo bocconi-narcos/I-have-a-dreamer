@@ -36,7 +36,7 @@ def check_runs_status():
     print(f"⏳ Local-only runs: {len(local_runs)}")
     
     if synced_runs:
-        print(f"\n�� Recent synced runs:")
+        print(f"\n✅ Recent synced runs:")
         for run in synced_runs[-5:]:  # Show last 5
             print(f"   {run}")
     
@@ -45,7 +45,7 @@ def check_runs_status():
         for run in local_runs[-5:]:  # Show last 5
             print(f"   {run}")
     
-    print(f"\n�� Check your runs at: https://wandb.ai/[your-username]/reward-predictor")
+    print(f"\n🌐 Check your runs at: https://wandb.ai/[your-username]/[your-project]")
 
 if __name__ == "__main__":
     check_runs_status() 
