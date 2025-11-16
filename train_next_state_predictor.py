@@ -4,8 +4,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-import yaml
 import wandb
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.models.state_encoder import StateEncoder
 from src.models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder_new import MaskEncoder
@@ -27,17 +29,6 @@ def update_ema(target_model, source_model, decay=0.995):
     with torch.no_grad():
         for target_param, source_param in zip(target_model.parameters(), source_model.parameters()):
             target_param.data.mul_(decay).add_(source_param.data, alpha=1 - decay)
-
-# --- Config Loader ---
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    
-    # Add default values for ground truth and decoder switches
-    config.setdefault('use_ground_truth', False)  # Use ground truth inputs instead of predicted
-    config.setdefault('use_decoder_loss', False)   # Use decoder losses instead of latent space losses
-    
-    return config
 
 # --- R² calculation function ---
 def calculate_r2_score(y_true, y_pred):
@@ -283,7 +274,7 @@ def evaluate_all_modules(color_predictor, selection_predictor, next_state_predic
     return avg_color_loss, avg_selection_loss, avg_next_state_loss, color_accuracy, color_class_acc
 
 # --- Main Training Loop ---
-def train_next_state_predictor():
+def train_next_state_predictor(cfg: DictConfig):
     """
     Main training loop for end-to-end training of all three modules: color predictor, selection mask predictor, and next state predictor.
     The buffer is expected to be a list of dicts with the required keys. The training loop:
@@ -294,63 +285,60 @@ def train_next_state_predictor():
         5. For selection: passes ground truth selection_mask through mask encoder to get target latent mask.
         6. For next state: concatenates state embedding, transform action encoding, and predicted latent mask, passes through next state predictor.
         7. Computes losses for all three modules and backpropagates through all networks.
-    All model choices and hyperparameters are loaded from config.yaml.
+    All model choices and hyperparameters are loaded from Hydra config.
     """
-    config = load_config()
-    buffer_path = config['buffer_path']
+    buffer_path = cfg.data.buffer_path
     fast_buffer_path = buffer_path + '.fast.pt'
     if not os.path.exists(fast_buffer_path):
         print(f"Fast buffer {fast_buffer_path} not found. Preprocessing...")
         subprocess.run(['python', 'scripts/preprocess_buffer.py', buffer_path, fast_buffer_path], check=True)
     else:
         print(f"Using fast buffer: {fast_buffer_path}")
-    encoder_type = config['encoder_type']
-    latent_dim = config['latent_dim']
-    encoder_params = config['encoder_params']
-    num_color_selection_fns = config['action_embedders']['action_color_embedder']['num_actions']
-    num_selection_fns = config['action_embedders']['action_selection_embedder']['num_actions']
-    num_transform_actions = config['action_embedders']['action_transform_embedder']['num_actions']
-    num_arc_colors = config['num_arc_colors']
-    color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
+    encoder_type = cfg.encoder_type
+    latent_dim = cfg.latent_dim
+    encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
+    num_color_selection_fns = cfg.model.predictors.action_embedders.action_color_embedder.num_actions
+    num_selection_fns = cfg.model.predictors.action_embedders.action_selection_embedder.num_actions
+    num_transform_actions = cfg.model.predictors.action_embedders.action_transform_embedder.num_actions
+    num_arc_colors = cfg.num_arc_colors
+    color_predictor_hidden_dim = cfg.model.predictors.color_predictor.hidden_dim
 
     # Action embedder configurations
-    color_selection_dim = config['action_embedders']['action_color_embedder']['embed_dim']
-    selection_dim = config['action_embedders']['action_selection_embedder']['embed_dim']
+    color_selection_dim = cfg.model.predictors.action_embedders.action_color_embedder.embed_dim
+    selection_dim = cfg.model.predictors.action_embedders.action_selection_embedder.embed_dim
     
     
     # Selection mask config
-    selection_cfg = config['selection_mask']
-    mask_encoder_params = selection_cfg['mask_encoder_params']
-    latent_mask_dim = selection_cfg['latent_mask_dim']
-    mask_predictor_params = selection_cfg['mask_predictor_params']
+    mask_encoder_params = OmegaConf.to_container(cfg.model.predictors.selection_mask.mask_encoder_params, resolve=True)
+    latent_mask_dim = cfg.model.predictors.selection_mask.latent_mask_dim
+    mask_predictor_params = OmegaConf.to_container(cfg.model.predictors.selection_mask.mask_predictor_params, resolve=True)
     transformer_depth_selection = mask_predictor_params['transformer_depth']
     transformer_heads_selection = mask_predictor_params['transformer_heads']
     transformer_dim_head_selection = mask_predictor_params['transformer_dim_head']
     transformer_mlp_dim_selection = mask_predictor_params['transformer_mlp_dim']
     transformer_dropout_selection = mask_predictor_params['transformer_dropout']
-    use_vicreg_selection = selection_cfg.get('use_vicreg', False)
-    vicreg_sim_coeff_selection = selection_cfg.get('vicreg_sim_coeff', 1.0)
-    vicreg_std_coeff_selection = selection_cfg.get('vicreg_std_coeff', 1.0)
-    vicreg_cov_coeff_selection = selection_cfg.get('vicreg_cov_coeff', 1.0)
+    use_vicreg_selection = OmegaConf.select(cfg.model.predictors.selection_mask, 'use_vicreg', default=False)
+    vicreg_sim_coeff_selection = cfg.model.predictors.selection_mask.vicreg_sim_coeff
+    vicreg_std_coeff_selection = cfg.model.predictors.selection_mask.vicreg_std_coeff
+    vicreg_cov_coeff_selection = cfg.model.predictors.selection_mask.vicreg_cov_coeff
     
     # Next state config
-    next_state_cfg = config['next_state']
-    latent_mask_dim_next_state = next_state_cfg['latent_mask_dim']
-    transformer_depth_next_state = next_state_cfg['transformer_depth']
-    transformer_heads_next_state = next_state_cfg['transformer_heads']
-    transformer_dim_head_next_state = next_state_cfg['transformer_dim_head']
-    transformer_mlp_dim_next_state = next_state_cfg['transformer_mlp_dim']
-    transformer_dropout_next_state = next_state_cfg['transformer_dropout']
-    use_vicreg_next_state = next_state_cfg.get('use_vicreg', False)
-    vicreg_sim_coeff_next_state = next_state_cfg.get('vicreg_sim_coeff', 1.0)
-    vicreg_std_coeff_next_state = next_state_cfg.get('vicreg_std_coeff', 1.0)
-    vicreg_cov_coeff_next_state = next_state_cfg.get('vicreg_cov_coeff', 1.0)
+    latent_mask_dim_next_state = cfg.model.predictors.next_state.latent_mask_dim
+    transformer_depth_next_state = cfg.model.predictors.next_state.transformer_depth
+    transformer_heads_next_state = cfg.model.predictors.next_state.transformer_heads
+    transformer_dim_head_next_state = cfg.model.predictors.next_state.transformer_dim_head
+    transformer_mlp_dim_next_state = cfg.model.predictors.next_state.transformer_mlp_dim
+    transformer_dropout_next_state = cfg.model.predictors.next_state.transformer_dropout
+    use_vicreg_next_state = OmegaConf.select(cfg.model.predictors.next_state, 'use_vicreg', default=False)
+    vicreg_sim_coeff_next_state = cfg.model.predictors.next_state.vicreg_sim_coeff
+    vicreg_std_coeff_next_state = cfg.model.predictors.next_state.vicreg_std_coeff
+    vicreg_cov_coeff_next_state = cfg.model.predictors.next_state.vicreg_cov_coeff
     
-    batch_size = config['batch_size']
-    num_epochs = config['num_epochs']
-    learning_rate = config['learning_rate']
-    num_workers = config['num_workers']
-    log_interval = config['log_interval']
+    batch_size = cfg.training.batch_size
+    num_epochs = cfg.training.num_epochs
+    learning_rate = cfg.training.learning_rate
+    num_workers = cfg.training.num_workers
+    log_interval = cfg.training.log_interval
 
     # State shape (channels, H, W) or (H, W)
     image_size = encoder_params.get('image_size', [10, 10])
@@ -388,7 +376,7 @@ def train_next_state_predictor():
 
     # --- WANDB LOGIN ---
     # Initialize wandb
-    wandb_config = config.copy()
+    wandb_config = OmegaConf.to_container(cfg, resolve=True)
     wandb.init(project="next-state-predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
 
     # --- Load pretrained encoder if specified ---
@@ -478,15 +466,15 @@ def train_next_state_predictor():
     # Reward Predictor initialization
     reward_predictor = RewardPredictor(
         latent_dim=latent_dim,
-        hidden_dim=config['reward_predictor'].get('hidden_dim', 256),
-        num_layers=config['reward_predictor'].get('num_layers', 3),
-        dropout=config['reward_predictor'].get('dropout', 0.1)
+        hidden_dim=OmegaConf.select(cfg.model.predictors.reward_predictor, 'hidden_dim', default=256),
+        num_layers=OmegaConf.select(cfg.model.predictors.reward_predictor, 'transformer_depth', default=3),
+        dropout=OmegaConf.select(cfg.model.predictors.reward_predictor, 'transformer_dropout', default=0.1)
     ).to(device)
     print(f"[RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
 
     # Load ground truth and decoder switches
-    use_ground_truth = config.get('use_ground_truth', False)
-    use_decoder_loss = config.get('use_decoder_loss', False)
+    use_ground_truth = OmegaConf.select(cfg, 'use_ground_truth', default=False)
+    use_decoder_loss = OmegaConf.select(cfg, 'use_decoder_loss', default=False)
     
     # Override configuration as requested:
     # - use_ground_truth=False for all predictors (color, selection, next_state, reward)
@@ -506,10 +494,11 @@ def train_next_state_predictor():
     if use_decoder_loss_selection or use_decoder_loss_next_state:
         if use_decoder_loss_selection:
             # Mask decoder for selection mask prediction
+            mask_decoder_params = OmegaConf.to_container(cfg.model.predictors.mask_decoder_params, resolve=True) if hasattr(cfg.model.predictors, 'mask_decoder_params') else {}
             mask_decoder = MaskDecoder(
                 image_size=image_size,
                 latent_dim=latent_mask_dim,
-                decoder_params=config.get('mask_decoder_params', {})
+                decoder_params=mask_decoder_params
             ).to(device)
             print(f"[MaskDecoder] Number of parameters: {sum(p.numel() for p in mask_decoder.parameters())}")
         
@@ -518,7 +507,7 @@ def train_next_state_predictor():
             state_decoder = StateDecoder(
                 image_size=image_size,
                 latent_dim=latent_dim,
-                decoder_params=config.get('decoder_params', {})
+                decoder_params=OmegaConf.to_container(cfg.model.predictors.decoder_params, resolve=True) if hasattr(cfg.model.predictors, 'decoder_params') else {}
             ).to(device)
             print(f"[StateDecoder] Number of parameters: {sum(p.numel() for p in state_decoder.parameters())}")
 
@@ -947,4 +936,7 @@ def train_next_state_predictor():
     wandb.finish()  # type: ignore
 
 if __name__ == "__main__":
-    train_next_state_predictor() 
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config")
+    train_next_state_predictor(cfg) 
