@@ -5,8 +5,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from torch.optim.lr_scheduler import CosineAnnealingLR
-import yaml
 import wandb
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.models.state_encoder import StateEncoder
 from src.models.predictors.reward_predictor import RewardPredictor, RewardPredictorLoss
 from src.data.replay_buffer_dataset import ReplayBufferDataset
@@ -14,11 +16,6 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
-
-
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
 
 def calculate_r2_score(y_true, y_pred):
     """
@@ -285,17 +282,14 @@ def evaluate_reward_predictor(reward_predictor, state_encoder, target_encoder, d
     
     return total_reward_mse / total_samples, total_reward_mae / total_samples, r2_score, uncertainty_stats
 
-def train_reward_predictor():
+def train_reward_predictor(cfg: DictConfig):
     """
     Train the simple MLP reward predictor.
     Takes three encoded states and predicts a scalar reward.
     """
     
-
-    config = load_config()
-    
     # Initialize wandb
-    wandb_config = config.copy()
+    wandb_config = OmegaConf.to_container(cfg, resolve=True)
     wandb_available = True
     try:
         wandb.init(project="reward-predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
@@ -306,28 +300,28 @@ def train_reward_predictor():
         wandb_available = False
     
     # Buffer setup
-    buffer_path = config['buffer_path']
+    buffer_path = cfg.data.buffer_path
     print(f"Using buffer: {buffer_path}")
     
     # Model parameters
-    encoder_type = config['encoder_type']
-    latent_dim = config['latent_dim']
-    encoder_params = config['encoder_params']
-    num_color_selection_fns = config['action_embedders']['action_color_embedder']['num_actions']
-    num_selection_fns = config['action_embedders']['action_selection_embedder']['num_actions']
-    num_transform_actions = config['action_embedders']['action_transform_embedder']['num_actions']
-    num_arc_colors = config['num_arc_colors']
+    encoder_type = cfg.encoder_type
+    latent_dim = cfg.latent_dim
+    encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
+    num_color_selection_fns = cfg.model.predictors.action_embedders.action_color_embedder.num_actions
+    num_selection_fns = cfg.model.predictors.action_embedders.action_selection_embedder.num_actions
+    num_transform_actions = cfg.model.predictors.action_embedders.action_transform_embedder.num_actions
+    num_arc_colors = cfg.num_arc_colors
     
     # Training parameters
-    batch_size = config['batch_size']
-    num_epochs = config['num_epochs']
-    learning_rate = config['learning_rate']
-    num_workers = config['num_workers']
-    log_interval = config['log_interval']
+    batch_size = cfg.training.batch_size
+    num_epochs = cfg.training.num_epochs
+    learning_rate = cfg.training.learning_rate
+    num_workers = cfg.training.num_workers
+    log_interval = cfg.training.log_interval
     
     # Simple stabilization parameters
-    gradient_clip_norm = config.get('gradient_clip_norm', 1.0)
-    patience = config.get('early_stopping_patience', 10)  # Early stopping patience
+    gradient_clip_norm = OmegaConf.select(cfg, 'gradient_clip_norm', default=1.0)
+    patience = OmegaConf.select(cfg, 'early_stopping_patience', default=10)  # Early stopping patience
 
     # State shape
     image_size = encoder_params.get('image_size', [10, 10])
@@ -366,9 +360,9 @@ def train_reward_predictor():
         print('Using device: CPU')
 
     # Load pretrained encoder if specified
-    use_pretrained_encoder = config.get('use_pretrained_encoder', False)
-    pretrained_encoder_path = config.get('pretrained_encoder_path', 'best_model_autoencoder.pth')
-    freeze_pretrained_encoder = config.get('freeze_pretrained_encoder', False)
+    use_pretrained_encoder = OmegaConf.select(cfg, 'use_pretrained_encoder', default=False)
+    pretrained_encoder_path = OmegaConf.select(cfg, 'pretrained_encoder_path', default='best_model_autoencoder.pth')
+    freeze_pretrained_encoder = OmegaConf.select(cfg, 'freeze_pretrained_encoder', default=False)
 
     # Create state encoder
     state_encoder = StateEncoder(
@@ -404,9 +398,9 @@ def train_reward_predictor():
     # Create simple MLP reward predictor
     reward_predictor = RewardPredictor(
         latent_dim=latent_dim,
-        hidden_dim=config['reward_predictor'].get('hidden_dim', 256),
-        num_layers=config['reward_predictor'].get('num_layers', 3),
-        dropout=config['reward_predictor'].get('dropout', 0.1)
+        hidden_dim=OmegaConf.select(cfg.model.predictors.reward_predictor, 'hidden_dim', default=256),
+        num_layers=OmegaConf.select(cfg.model.predictors.reward_predictor, 'transformer_depth', default=3),
+        dropout=OmegaConf.select(cfg.model.predictors.reward_predictor, 'transformer_dropout', default=0.1)
     ).to(device)
     print(f"[RewardPredictor] Number of parameters: {sum(p.numel() for p in reward_predictor.parameters())}")
 
@@ -674,4 +668,7 @@ def train_reward_predictor():
     print("Training completed!")
 
 if __name__ == "__main__":
-    train_reward_predictor()
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config")
+    train_reward_predictor(cfg)
