@@ -1,0 +1,14 @@
+# @package model.encoder
+
+encoder_params:
+  image_size: [10, 10]
+  input_channels: 1
+  depth: 4
+  heads: 16
+  mlp_dim: 512
+  transformer_dim: 96
+  dropout: 0.4
+  emb_dropout: 0.2
+  scaled_position_embeddings: false
+  colors_vocab_size: 12
+
