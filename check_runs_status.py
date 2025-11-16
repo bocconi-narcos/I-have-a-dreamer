@@ -21,12 +21,13 @@ def check_runs_status():
                     # Check if run is synced
                     try:
                         with open(history_file, 'r') as f:
-                            last_line = f.readlines()[-1] if f.readlines() else ""
+                            lines = f.readlines()
+                            last_line = lines[-1] if lines else ""
                             if '"synced": true' in last_line:
                                 synced_runs.append(item)
                             else:
                                 local_runs.append(item)
-                    except:
+                    except Exception:
                         local_runs.append(item)
                 else:
                     local_runs.append(item)
