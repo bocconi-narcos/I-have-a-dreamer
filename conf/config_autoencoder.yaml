@@ -1,0 +1,15 @@
+# @package _global_
+
+defaults:
+  - data/autoencoder: default
+  - model/encoder: autoencoder
+  - model/decoder: autoencoder
+  - training/autoencoder: default
+  - _self_
+
+# Autoencoder-specific settings
+latent_dim: 128
+num_color_selection_fns: 4
+num_selection_fns: 17
+num_transform_actions: 10
+
