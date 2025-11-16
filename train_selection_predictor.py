@@ -3,7 +3,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-import yaml
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig, OmegaConf
 from src.models.state_encoder import StateEncoder
 from src.models.predictors.color_predictor import ColorPredictor
 from src.models.mask_encoder_new import MaskEncoder
@@ -18,11 +20,6 @@ except ImportError:
     print("Warning: wandb not available. Training will continue without logging.")
     WANDB_AVAILABLE = False
 from tqdm import tqdm
-
-# --- Config Loader ---
-def load_config(config_path="config.yaml"):
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
 
 # --- One-hot encoding utility ---
 def one_hot(indices, num_classes):
@@ -211,7 +208,7 @@ def evaluate_selection_and_color_with_switches(selection_predictor, color_predic
 
 
 # --- Main Training Loop ---
-def train_selection_predictor():
+def train_selection_predictor(cfg: DictConfig):
     """
     Main training loop for both selection mask predictor and color predictor. Loads config, prepares dataset, builds models, and trains.
     The buffer is expected to be a list of dicts with the required keys. The training loop:
@@ -221,28 +218,27 @@ def train_selection_predictor():
         4. For selection: passes ground truth selection_mask through mask encoder to get target latent mask.
         5. For color: concatenates state embedding and color action encoding, passes through color predictor MLP.
         6. Computes MSE/VICReg loss for selection and cross-entropy loss for color.
-    All model choices and hyperparameters are loaded from config.yaml.
+    All model choices and hyperparameters are loaded from Hydra config.
     """
     # Set device to Mac GPU (MPS) if available, otherwise CPU
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 
-    config = load_config()
-    buffer_path = config['buffer_path']
-    latent_dim = config['latent_dim']
+    buffer_path = cfg.data.buffer_path
+    latent_dim = cfg.latent_dim
 
     # --- Load ground truth and decoder switches ---
-    use_ground_truth = config.get('use_ground_truth', False)
-    use_decoder_loss = config.get('use_decoder_loss', False)
+    use_ground_truth = OmegaConf.select(cfg, 'use_ground_truth', default=False)
+    use_decoder_loss = OmegaConf.select(cfg, 'use_decoder_loss', default=False)
     print(f"Training configuration:")
     print(f"  - Use ground truth inputs: {use_ground_truth}")
     print(f"  - Use decoder losses: {use_decoder_loss}")
 
     # Encoder parameters
-    encoder_params = config['encoder_params']
-    mask_encoder_params = config['selection_mask']['mask_encoder_params']
+    encoder_params = OmegaConf.to_container(cfg.model.encoder.encoder_params, resolve=True)
+    mask_encoder_params = OmegaConf.to_container(cfg.model.predictors.selection_mask.mask_encoder_params, resolve=True)
 
     # Mask Encoder parameters
-    latent_mask_dim = config['selection_mask']['latent_mask_dim']
+    latent_mask_dim = cfg.model.predictors.selection_mask.latent_mask_dim
     mask_encoder_depth = mask_encoder_params['depth']
     mask_encoder_heads = mask_encoder_params['heads']
     mask_encoder_mlp_dim = mask_encoder_params['mlp_dim']
@@ -250,7 +246,7 @@ def train_selection_predictor():
     mask_encoder_vocab_size = mask_encoder_params['vocab_size']
 
     # Color predictor parameters
-    mask_predictor_params = config['selection_mask']['mask_predictor_params']
+    mask_predictor_params = OmegaConf.to_container(cfg.model.predictors.selection_mask.mask_predictor_params, resolve=True)
     transformer_depth = mask_predictor_params['transformer_depth']
     transformer_heads = mask_predictor_params['transformer_heads']
     transformer_dim_head = mask_predictor_params['transformer_dim_head']
@@ -258,42 +254,42 @@ def train_selection_predictor():
     transformer_dropout = mask_predictor_params['transformer_dropout']
 
     # Action embedder parameters
-    num_color_selection_fns = config['action_embedders']['action_color_embedder']['num_actions']
-    num_selection_fns = config['action_embedders']['action_selection_embedder']['num_actions']
-    num_transform_actions = config['action_embedders']['action_transform_embedder']['num_actions']
-    color_selection_dim = config['action_embedders']['action_color_embedder']['embed_dim']
-    selection_dim = config['action_embedders']['action_selection_embedder']['embed_dim']
+    num_color_selection_fns = cfg.model.predictors.action_embedders.action_color_embedder.num_actions
+    num_selection_fns = cfg.model.predictors.action_embedders.action_selection_embedder.num_actions
+    num_transform_actions = cfg.model.predictors.action_embedders.action_transform_embedder.num_actions
+    color_selection_dim = cfg.model.predictors.action_embedders.action_color_embedder.embed_dim
+    selection_dim = cfg.model.predictors.action_embedders.action_selection_embedder.embed_dim
     
     # Color predictor parameters
-    num_arc_colors = config['num_arc_colors']
-    color_predictor_hidden_dim = config['color_predictor']['hidden_dim']
+    num_arc_colors = cfg.num_arc_colors
+    color_predictor_hidden_dim = cfg.model.predictors.color_predictor.hidden_dim
 
     # --- MaskDecoder instantiation if needed ---
     mask_decoder = None
     if use_decoder_loss:
         from src.models.mask_decoder_new import MaskDecoder
+        mask_decoder_params = OmegaConf.to_container(cfg.model.predictors.mask_decoder_params, resolve=True) if hasattr(cfg.model.predictors, 'mask_decoder_params') else {}
         mask_decoder = MaskDecoder(
             image_size=encoder_params.get('image_size', [10, 10]),
             latent_dim=latent_mask_dim,
-            decoder_params=config.get('mask_decoder_params', {})
+            decoder_params=mask_decoder_params
         ).to(device)
         print(f"[MaskDecoder] Number of parameters: {sum(p.numel() for p in mask_decoder.parameters())}")
 
     # VICReg parameters
-    selection_cfg = config['selection_mask']
-    use_vicreg = selection_cfg.get('use_vicreg', True)
-    vicreg_sim_coeff = selection_cfg['vicreg_sim_coeff']
-    vicreg_std_coeff = selection_cfg['vicreg_std_coeff']
-    vicreg_cov_coeff = selection_cfg['vicreg_cov_coeff']
+    use_vicreg = OmegaConf.select(cfg.model.predictors.selection_mask, 'use_vicreg', default=True)
+    vicreg_sim_coeff = cfg.model.predictors.selection_mask.vicreg_sim_coeff
+    vicreg_std_coeff = cfg.model.predictors.selection_mask.vicreg_std_coeff
+    vicreg_cov_coeff = cfg.model.predictors.selection_mask.vicreg_cov_coeff
     
     print(f"  - Use VICReg loss: {use_vicreg}")
     
     # Training parameters
-    batch_size = config['batch_size']
-    num_epochs = config['num_epochs']
-    learning_rate = config['learning_rate']
-    num_workers = config['num_workers']
-    log_interval = config['log_interval']
+    batch_size = cfg.training.batch_size
+    num_epochs = cfg.training.num_epochs
+    learning_rate = cfg.training.learning_rate
+    num_workers = cfg.training.num_workers
+    log_interval = cfg.training.log_interval
 
     # State shape (channels, H, W) or (H, W)
     image_size = encoder_params.get('image_size', [10, 10])
@@ -400,7 +396,8 @@ def train_selection_predictor():
     wandb_available = WANDB_AVAILABLE
     if wandb_available:
         try:
-            wandb.init(project="selection_predictor", config=config, settings=wandb.Settings(init_timeout=180))
+            wandb_config = OmegaConf.to_container(cfg, resolve=True)
+            wandb.init(project="selection_predictor", config=wandb_config, settings=wandb.Settings(init_timeout=180))
         except Exception as e:
             print(f"Wandb initialization failed: {e}")
             print("Continuing without wandb logging...")
@@ -636,4 +633,7 @@ def train_selection_predictor():
         wandb.finish()
 
 if __name__ == "__main__":
-    train_selection_predictor() 
+    if not GlobalHydra().is_initialized():
+        initialize(config_path="conf", version_base=None)
+    cfg = compose(config_name="config")
+    train_selection_predictor(cfg) 
