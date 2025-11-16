@@ -23,5 +23,6 @@ This project is designed for easy extension and experimentation.
 - To add a new sub-action module (e.g., selection mask prediction):
   - Implement a new predictor (e.g., SelectionMaskPredictor) and encoder (e.g., MaskEncoder) in `src/models/`.
   - Add a new training loop (e.g., `train_selection_mask_predictor`) and dataset class if needed.
-  - Update the config YAML to include all relevant hyperparameters.
-  - Update the documentation (`docs/model.md`, `docs/training.md`, `docs/buffer.md`) to describe the new module and its data flow. 
+  - Add configuration in `conf/model/predictors/default.yaml` or create a new config file.
+  - Update the documentation (`docs/model.md`, `docs/training.md`, `docs/buffer.md`) to describe the new module and its data flow.
+  - See [Configuration Guide](./configuration.md) for details on adding new configs. 
