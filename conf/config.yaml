@@ -1,0 +1,43 @@
+# @package _global_
+
+defaults:
+  - data: default
+  - model/encoder: vit
+  - model/predictors: default
+  - training: default
+  - _self_
+
+# Training Switches
+use_ground_truth: false  # Use ground truth inputs instead of predicted inputs
+use_decoder_loss: true    # Use decoder losses instead of latent space losses
+
+# State Encoder (Shared across all modules)
+encoder_type: "vit"  # Options: "mlp", "cnn", "vit"
+latent_dim: 256
+use_pretrained_encoder: true  # Set to true to load pretrained encoder
+pretrained_encoder_path: "weights/best_model_next_state_predictor.pth"
+freeze_pretrained_encoder: false
+num_arc_colors: 12  # Number of colors in the arc (used for color prediction)
+
+# Early Stopping and Model Saving
+color_predictor_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_color_predictor.pth"
+selection_predictor_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_selection_predictor.pth"
+next_state_predictor_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_next_state_predictor.pth"
+full_model_training:
+  early_stopping_patience: 10
+  best_model_save_path: "best_model_full_model.pth"
+
+# SOTA Training Parameters (for reward predictor)
+mse_weight: 1.0  # Weight for main MSE loss
+uncertainty_weight: 0.1  # Weight for uncertainty loss
+contrastive_weight: 0.05  # Weight for contrastive loss
+gradient_clip_norm: 1.0  # Gradient clipping norm
+early_stopping_patience: 10  # Increased patience for better convergence
+warmup_epochs: 5  # Warmup epochs for learning rate scheduler
+
